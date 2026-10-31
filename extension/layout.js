@@ -140,10 +140,15 @@
     const positions=layoutAll(converted,options,width,height,scale);
     const resultHeight=Math.ceil(Math.max(height,...positions.map(p=>p.y+p.h+12*scale)));
     const routes=positions.map((p,i)=>{
-      const start=center(converted[i].anchor);
+      const anchor=converted[i].anchor,mid=center(anchor),target=center(p);
+      // Start outside the control, never through the link label itself.
+      const starts=[
+        {x:mid.x,y:anchor.y-3*scale},{x:mid.x,y:anchor.y+anchor.h+3*scale},
+        {x:anchor.x-3*scale,y:mid.y},{x:anchor.x+anchor.w+3*scale,y:mid.y}
+      ].sort((a,b)=>distance(a,target)-distance(b,target));
       const sides=[{x:p.x+p.w/2,y:p.y},{x:p.x+p.w/2,y:p.y+p.h},{x:p.x,y:p.y+p.h/2},{x:p.x+p.w,y:p.y+p.h/2}];
       let best=null;
-      for(const end of sides){
+      for(const start of starts.slice(0,2))for(const end of sides){
         const blocks=positions.filter((_,j)=>j!==i);
         const path=route(start,end,occ,blocks,resultHeight);
         if(!path)continue;
