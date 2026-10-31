@@ -115,6 +115,7 @@
     if(r.width>innerWidth*.8||r.height>innerHeight*.8)continue;
     protectedRects.push({x:Math.max(0,r.left),y:Math.max(0,r.top),w:Math.min(innerWidth,r.right)-Math.max(0,r.left),h:Math.min(innerHeight,r.bottom)-Math.max(0,r.top)});
   }
+  state.routeRects=protectedRects.slice(); // Connectors may cross card borders, not text/controls.
   // Protect panel/card outlines, but NOT their empty interiors.
   // This stops a popup from straddling a statistics card or page section.
   const panels='header,nav,aside,main,section,article,[role="navigation"],[role="main"],[class*="card" i],[class*="panel" i],[class*="statistic" i]';
@@ -140,7 +141,8 @@
   if(!window.SmartCaptureLayout)throw Error('Layout engine missing. Reload extension and tab.');
   const b=state.base,img=await load(b.image),sx=b.width/b.viewportWidth,sy=b.height/b.viewportHeight;
   const obstacles=state.protectedRects.filter(r=>r.w>0&&r.h>0).map(r=>({x:r.x*sx,y:r.y*sy,w:r.w*sx,h:r.h*sy}));
-  const result=window.SmartCaptureLayout.compute({items:state.items,obstacles,image:img,width:b.width,height:b.height,scale:sx});
+  const routeObstacles=(state.routeRects||state.protectedRects).filter(r=>r.w>0&&r.h>0).map(r=>({x:r.x*sx,y:r.y*sy,w:r.w*sx,h:r.h*sy}));
+  const result=window.SmartCaptureLayout.compute({items:state.items,obstacles,routeObstacles,image:img,width:b.width,height:b.height,scale:sx});
   const canvas=document.createElement('canvas');canvas.width=b.width;canvas.height=result.height;
   const ctx=canvas.getContext('2d');ctx.fillStyle='#f7f7fc';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0);
   // All connectors are painted BEFORE the popup pixels. Original popup text remains intact.
