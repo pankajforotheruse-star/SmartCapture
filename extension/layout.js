@@ -1,128 +1,152 @@
 'use strict';
-/* SmartCapture layout engine v0.5: no network, no dependencies. */
+/* Safety-first layout engine, v0.6. Strict non-overlap: no forced placement on content. */
 (() => {
- const overlap=(a,b,p=0)=>a.x<b.x+b.w+p&&a.x+a.w+p>b.x&&a.y<b.y+b.h+p&&a.y+a.h+p>b.y;
- const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
- const center=r=>({x:r.x+r.w/2,y:r.y+r.h/2});
- const clamp=(x,l,h)=>Math.max(l,Math.min(h,x));
- function densityMap(image,w,h){
-  const c=document.createElement('canvas'),step=6;c.width=Math.ceil(w/step);c.height=Math.ceil(h/step);
-  const context=c.getContext('2d',{willReadFrequently:true});context.drawImage(image,0,0,c.width,c.height);
-  const {data}=context.getImageData(0,0,c.width,c.height),iw=c.width,ih=c.height;
-  const integral=new Float64Array((iw+1)*(ih+1));
-  for(let y=0;y<ih;y++){let row=0;for(let x=0;x<iw;x++){
-   const k=(y*iw+x)*4,kl=(y*iw+Math.max(x-1,0))*4,ku=(Math.max(y-1,0)*iw+x)*4;
-   const delta=[0,1,2].reduce((t,z)=>t+Math.abs(data[k+z]-data[kl+z])+Math.abs(data[k+z]-data[ku+z]),0);
-   row+=delta>44?1:0;integral[(y+1)*(iw+1)+x+1]=integral[y*(iw+1)+x+1]+row;
-  }}
-  return r=>{
-   const x1=clamp(Math.floor(r.x/step),0,iw),x2=clamp(Math.ceil((r.x+r.w)/step),0,iw);
-   const y1=clamp(Math.floor(r.y/step),0,ih),y2=clamp(Math.ceil((r.y+r.h)/step),0,ih);
-   if(x1>=x2||y1>=y2)return 1;
-   return (integral[y2*(iw+1)+x2]-integral[y1*(iw+1)+x2]-integral[y2*(iw+1)+x1]+integral[y1*(iw+1)+x1])/((x2-x1)*(y2-y1));
-  };
- }
- function candidates(item,obstacles,ink,W,H,scale){
-  const a=center(item.anchor),w=item.width+4,h=item.height+4,pad=Math.max(5,4*scale),step=Math.max(10,Math.round(14*scale));
-  const result=[];
-  // Coarse dynamic grid; refine around the best coarse locations.
-  function test(x,y){
-   const r={x,y,w,h};
-   if(x<8||y<8||x+w>W-8||y+h>H-8)return;
-   if(obstacles.some(o=>overlap(r,o,pad)))return;
-   const noise=ink(r);if(noise>.025)return;
-   const d=dist(a,center(r));
-   result.push({...r,cost:d+noise*16000+Math.max(0,y-a.y)*.025});
+  const overlap=(a,b,p=0)=>a.x<b.x+b.w+p&&a.x+a.w+p>b.x&&a.y<b.y+b.h+p&&a.y+a.h+p>b.y;
+  const clamp=(v,a,b)=>Math.max(a,Math.min(v,b));
+  const center=r=>({x:r.x+r.w/2,y:r.y+r.h/2});
+  const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+  function occupancy(image,width,height,obstacles,scale) {
+    const cell=Math.max(3,Math.round(4*scale)),cols=Math.ceil(width/cell),rows=Math.ceil(height/cell);
+    const c=document.createElement('canvas');c.width=cols;c.height=rows;
+    const ctx=c.getContext('2d',{willReadFrequently:true});ctx.drawImage(image,0,0,cols,rows);
+    const raw=ctx.getImageData(0,0,cols,rows).data;
+    const blocked=new Uint8Array(cols*rows),visual=new Uint8Array(cols*rows);
+    for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
+      const i=y*cols+x,j=4*i,r=raw[j],g=raw[j+1],b=raw[j+2];
+      const contrast=Math.max(r,g,b)-Math.min(r,g,b);
+      // Conservative dark/color ink detector; light card surfaces remain available.
+      visual[i]=(Math.min(r,g,b)<231||contrast>31)?1:0;
+    }
+    const padding=Math.ceil(7*scale/cell);
+    for(const r of obstacles){
+      const x1=clamp(Math.floor(r.x/cell)-padding,0,cols-1),x2=clamp(Math.ceil((r.x+r.w)/cell)+padding,0,cols-1);
+      const y1=clamp(Math.floor(r.y/cell)-padding,0,rows-1),y2=clamp(Math.ceil((r.y+r.h)/cell)+padding,0,rows-1);
+      for(let y=y1;y<=y2;y++)for(let x=x1;x<=x2;x++)blocked[y*cols+x]=1;
+    }
+    // Dilate visual details so neither borders nor antialiased text get touched.
+    for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)if(visual[y*cols+x]){
+      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+        const xx=x+dx,yy=y+dy;
+        if(xx>=0&&yy>=0&&xx<cols&&yy<rows)blocked[yy*cols+xx]=1;
+      }
+    }
+    const stride=cols+1,sum=new Uint32Array((cols+1)*(rows+1));
+    for(let y=0;y<rows;y++){let line=0;for(let x=0;x<cols;x++){line+=blocked[y*cols+x];sum[(y+1)*stride+x+1]=sum[y*stride+x+1]+line;}}
+    function count(r){
+      const x1=clamp(Math.floor(r.x/cell),0,cols),x2=clamp(Math.ceil((r.x+r.w)/cell),0,cols);
+      const y1=clamp(Math.floor(r.y/cell),0,rows),y2=clamp(Math.ceil((r.y+r.h)/cell),0,rows);
+      return sum[y2*stride+x2]-sum[y1*stride+x2]-sum[y2*stride+x1]+sum[y1*stride+x1];
+    }
+    return {count,blocked,cols,rows,cell};
   }
-  for(let y=10;y+h<=H-10;y+=step)for(let x=10;x+w<=W-10;x+=step)test(x,y);
-  result.sort((a,b)=>a.cost-b.cost);
-  const short=result.slice(0,22);
-  for(const p of short)for(const dy of [-step/2,0,step/2])for(const dx of [-step/2,0,step/2])test(Math.round(p.x+dx),Math.round(p.y+dy));
-  result.sort((a,b)=>a.cost-b.cost);
-  const unique=[];for(const r of result){if(unique.every(v=>Math.abs(v.x-r.x)+Math.abs(v.y-r.y)>step))unique.push(r);if(unique.length>=18)break;}
-  return unique;
- }
- function route(start,end,obstacles,W,H,scale,soft=false){
-  // A* on a coarse grid with obstacle inflation, then orthogonalize and simplify.
-  const unit=Math.max(8,Math.round(12*scale)),nx=Math.ceil(W/unit)+1,ny=Math.ceil(H/unit)+1;
-  const point=(x,y)=>({x:clamp(Math.round(x/unit),0,nx-1),y:clamp(Math.round(y/unit),0,ny-1)});
-  const a=point(start.x,start.y),b=point(end.x,end.y),key=(x,y)=>y*nx+x;
-  const blocked=new Uint8Array(nx*ny);
-  for(const o of obstacles){
-   const x1=clamp(Math.floor((o.x-3*scale)/unit),0,nx-1),x2=clamp(Math.ceil((o.x+o.w+3*scale)/unit),0,nx-1);
-   const y1=clamp(Math.floor((o.y-3*scale)/unit),0,ny-1),y2=clamp(Math.ceil((o.y+o.h+3*scale)/unit),0,ny-1);
-   for(let y=y1;y<=y2;y++)for(let x=x1;x<=x2;x++)blocked[key(x,y)]=1;
+  function candidates(item,occ,width,height,scale){
+    const w=item.width+4,h=item.height+4;
+    const origin=center(item.anchor),step=Math.max(9,Math.round(13*scale)),gap=Math.round(10*scale);
+    const found=[];
+    for(let y=gap;y+h<height-gap;y+=step)for(let x=gap;x+w<width-gap;x+=step){
+      const r={x,y,w,h};
+      if(occ.count(r)>0)continue; // HARD constraint, including background text and borders.
+      found.push({...r,cost:distance(origin,center(r))});
+    }
+    found.sort((a,b)=>a.cost-b.cost);
+    const best=[];
+    for(const r of found){
+      if(best.some(p=>Math.abs(p.x-r.x)<step&&Math.abs(p.y-r.y)<step))continue;
+      best.push(r);if(best.length===24)break;
+    }
+    return best;
   }
-  // Endpoint cells must remain accessible; anchored controls themselves can be occupied.
-  blocked[key(a.x,a.y)]=0;blocked[key(b.x,b.y)]=0;
-  const queue=[{x:a.x,y:a.y,g:0,f:Math.abs(a.x-b.x)+Math.abs(a.y-b.y),direction:-1}];
-  const costs=new Float64Array(nx*ny).fill(Infinity),previous=new Int32Array(nx*ny).fill(-1),turns=new Int8Array(nx*ny).fill(-1);
-  costs[key(a.x,a.y)]=0;let reached=false,iterations=0;
-  const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
-  while(queue.length&&iterations++<nx*ny*5){
-   queue.sort((u,v)=>v.f-u.f);const cur=queue.pop(),k=key(cur.x,cur.y);
-   if(cur.g>costs[k]+.0001)continue;
-   if(cur.x===b.x&&cur.y===b.y){reached=true;break;}
-   for(let d=0;d<4;d++){
-    const x=cur.x+dirs[d][0],y=cur.y+dirs[d][1];if(x<0||y<0||x>=nx||y>=ny)continue;
-    const next=key(x,y);if(blocked[next]&&!soft)continue;
-    const g=cur.g+1+(blocked[next]?75:0)+(cur.direction>=0&&cur.direction!==d?.35:0);
-    if(g>=costs[next])continue;
-    costs[next]=g;previous[next]=k;turns[next]=d;
-    queue.push({x,y,g,f:g+Math.abs(x-b.x)+Math.abs(y-b.y),direction:d});
-   }
+  function layoutAll(items,options,width,height,scale){
+    // Joint search; every candidate has already passed the original-page safety check.
+    let beam=[{positions:[],cost:0}];
+    for(let i=0;i<items.length;i++){
+      const next=[];
+      for(const entry of beam)for(const p of options[i]){
+        if(entry.positions.some(q=>overlap(p,q,Math.round(12*scale))))continue;
+        next.push({positions:[...entry.positions,p],cost:entry.cost+p.cost});
+      }
+      next.sort((a,b)=>a.cost-b.cost);beam=next.slice(0,96);
+      if(!beam.length)break;
+    }
+    if(beam.length&&beam[0].positions.length===items.length)return beam[0].positions;
+    // Guaranteed safe fallback: place all popups BELOW the screenshot, not on top of the page.
+    let y=height+Math.round(18*scale);
+    return items.map(item=>{
+      const w=item.width+4,h=item.height+4;
+      const x=clamp(center(item.anchor).x-w/2,12,Math.max(12,width-w-12));
+      const p={x,y,w,h,extended:true};y+=h+Math.round(18*scale);return p;
+    });
   }
-  if(!reached)return null;
-  const nodes=[];let at=key(b.x,b.y);while(at>=0){nodes.push({x:(at%nx)*unit,y:Math.floor(at/nx)*unit});if(at===key(a.x,a.y))break;at=previous[at];}
-  nodes.reverse();const reduced=[start];
-  for(let i=1;i<nodes.length-1;i++){
-   const p=nodes[i-1],q=nodes[i],r=nodes[i+1];if((p.x===q.x&&q.x===r.x)||(p.y===q.y&&q.y===r.y))continue;reduced.push(q);
+  function route(start,end,base,extra,height){
+    const cell=Math.max(8,base.cell*3),nx=Math.ceil(base.cols*base.cell/cell),ny=Math.ceil(height/cell);
+    const locate=(p)=>({x:clamp(Math.floor(p.x/cell),0,nx-1),y:clamp(Math.floor(p.y/cell),0,ny-1)});
+    const a=locate(start),b=locate(end),index=(x,y)=>y*nx+x;
+    const forbidden=new Uint8Array(nx*ny);
+    // Any occupied subcell blocks a routing cell; original text remains protected.
+    for(let y=0;y<ny;y++)for(let x=0;x<nx;x++){
+      const xy={x:x*cell,y:y*cell,w:cell,h:cell};
+      if(y*cell<base.rows*base.cell&&base.count(xy)>0)forbidden[index(x,y)]=1;
+      if(extra.some(p=>overlap(xy,p,0)))forbidden[index(x,y)]=1;
+    }
+    // Allow escaping the originating button's bounding box and entering popup edge.
+    for(let y=Math.max(0,a.y-1);y<=Math.min(ny-1,a.y+1);y++)
+      for(let x=Math.max(0,a.x-1);x<=Math.min(nx-1,a.x+1);x++)forbidden[index(x,y)]=0;
+    forbidden[index(b.x,b.y)]=0;
+    const costs=new Float64Array(nx*ny).fill(Infinity),parent=new Int32Array(nx*ny).fill(-1);
+    const heuristic=(x,y)=>Math.abs(x-b.x)+Math.abs(y-b.y);
+    const queue=[{x:a.x,y:a.y,g:0,f:heuristic(a.x,a.y)}];costs[index(a.x,a.y)]=0;
+    const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+    let found=false,iterations=0;
+    while(queue.length&&iterations++<nx*ny*5){
+      queue.sort((u,v)=>v.f-u.f);const cur=queue.pop(),id=index(cur.x,cur.y);
+      if(cur.g!==costs[id])continue;
+      if(cur.x===b.x&&cur.y===b.y){found=true;break;}
+      for(const [dx,dy] of dirs){
+        const x=cur.x+dx,y=cur.y+dy;if(x<0||y<0||x>=nx||y>=ny||forbidden[index(x,y)])continue;
+        const k=index(x,y),g=cur.g+1;if(g>=costs[k])continue;
+        costs[k]=g;parent[k]=id;queue.push({x,y,g,f:g+heuristic(x,y)});
+      }
+    }
+    if(!found)return null; // Do not draw damaging fallback connectors through page text.
+    let at=index(b.x,b.y);const nodes=[];
+    while(at>=0){nodes.push({x:(at%nx+.5)*cell,y:(Math.floor(at/nx)+.5)*cell});if(at===index(a.x,a.y))break;at=parent[at];}
+    nodes.reverse();
+    const routePoints=[start];
+    if(nodes.length){
+      // Orthogonal entry/exit to actual control and popup coordinates.
+      routePoints.push({x:start.x,y:nodes[0].y},nodes[0]);
+      for(let i=1;i<nodes.length-1;i++){
+        const p=nodes[i-1],q=nodes[i],r=nodes[i+1];
+        if((p.x===q.x&&q.x===r.x)||(p.y===q.y&&q.y===r.y))continue;
+        routePoints.push(q);
+      }
+      routePoints.push(nodes.at(-1),{x:end.x,y:nodes.at(-1).y});
+    }
+    routePoints.push(end);return routePoints;
   }
-  reduced.push(end);
-  // Add an orthogonal entry/exit where possible. Never draw a diagonal over page text.
-  return reduced;
- }
- function compute({items,obstacles,image,width,height,scale=1}){
-  const W=width,H=height,ink=densityMap(image,W,H);
-  const popupItems=items.map(i=>({...i,anchor:{x:i.anchor.x*scale,y:i.anchor.y*scale,w:i.anchor.width*scale,h:i.anchor.height*scale}}));
-  const options=popupItems.map(it=>candidates(it,obstacles,ink,W,H,scale));
-  // Global beam search: solve all popup positions jointly, not in click order.
-  let beam=[{positions:[],cost:0}];
-  for(let i=0;i<items.length;i++){
-   const choices=options[i],next=[];
-   for(const previous of beam)for(const pos of choices){
-    if(previous.positions.some(p=>overlap(pos,p,12*scale)))continue;
-    next.push({positions:[...previous.positions,pos],cost:previous.cost+pos.cost});
-   }
-   next.sort((a,b)=>a.cost-b.cost);beam=next.slice(0,80);
-   if(!beam.length)break;
+  function compute({items,obstacles,image,width,height,scale=1}){
+    if(!items.length)return {positions:[],routes:[],height};
+    const converted=items.map(item=>({...item,anchor:{
+      x:item.anchor.x*scale,y:item.anchor.y*scale,w:item.anchor.width*scale,h:item.anchor.height*scale
+    }}));
+    const occ=occupancy(image,width,height,obstacles,scale);
+    const options=converted.map(item=>candidates(item,occ,width,height,scale));
+    const positions=layoutAll(converted,options,width,height,scale);
+    const resultHeight=Math.ceil(Math.max(height,...positions.map(p=>p.y+p.h+12*scale)));
+    const routes=positions.map((p,i)=>{
+      const start=center(converted[i].anchor);
+      const sides=[{x:p.x+p.w/2,y:p.y},{x:p.x+p.w/2,y:p.y+p.h},{x:p.x,y:p.y+p.h/2},{x:p.x+p.w,y:p.y+p.h/2}];
+      let best=null;
+      for(const end of sides){
+        const blocks=positions.filter((_,j)=>j!==i);
+        const path=route(start,end,occ,blocks,resultHeight);
+        if(!path)continue;
+        const length=path.slice(1).reduce((sum,point,j)=>sum+distance(point,path[j]),0);
+        if(!best||length<best.length)best={path,length};
+      }
+      return best?.path||null;
+    });
+    return {positions,routes,height:resultHeight,unrouted:routes.filter(r=>!r).length};
   }
-  let positions=beam.length?beam[0].positions:[];
-  // Conservative fallback: never overwrite page data; extend downwards when necessary.
-  if(positions.length!==items.length){
-   positions=[];let below=H+16*scale;
-   for(let i=0;i<items.length;i++){
-    const it=popupItems[i],cand=options[i].find(p=>positions.every(q=>!overlap(p,q,12*scale)));
-    if(cand){positions.push(cand);continue;}
-    const w=it.width+4,h=it.height+4;
-    const x=clamp(center(it.anchor).x-w/2,12,W-w-12);
-    positions.push({x,y:below,w,h});below+=h+18*scale;
-   }
-  }
-  const routes=positions.map((pos,i)=>{
-   const a=center(popupItems[i].anchor);
-   const sides=[{x:pos.x,y:pos.y+pos.h/2},{x:pos.x+pos.w,y:pos.y+pos.h/2},{x:pos.x+pos.w/2,y:pos.y},{x:pos.x+pos.w/2,y:pos.y+pos.h}];
-   const blocks=[...obstacles.filter(o=>!overlap(o,popupItems[i].anchor,2)),...positions];
-   let best=null;
-   for(const edge of sides){
-    const routeObstacles=blocks.filter(o=>o!==pos);
-    const routeHeight=Math.max(H,...positions.map(p=>p.y+p.h))+24*scale;
-    const path=route(a,edge,routeObstacles,W,routeHeight,scale)||route(a,edge,routeObstacles,W,routeHeight,scale,true);
-    if(path){const length=path.slice(1).reduce((sum,p,j)=>sum+dist(p,path[j]),0);if(!best||length<best.length)best={path,length};}
-   }
-   return best?.path||null;
-  });
-  return {positions,routes,height:Math.ceil(Math.max(H,...positions.map(p=>p.y+p.h+12*scale)))};
- }
- window.SmartCaptureLayout={compute,overlap};
+  window.SmartCaptureLayout={compute,overlap};
 })();
