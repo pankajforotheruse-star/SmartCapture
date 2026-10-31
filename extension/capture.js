@@ -2,7 +2,7 @@
 (() => {
  if(window.__smartCaptureV2)return;
  window.__smartCaptureV2=true;
- const state={active:false,base:null,items:[],anchor:null,pending:null,observing:null,busy:false,lastCapture:0};
+ const state={active:false,base:null,items:[],anchor:null,pending:null,observing:null,busy:false,lastCapture:0,protectedRects:[]};
  const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
  const sleep=t=>new Promise(r=>setTimeout(r,t));
  const visible=el=>{if(!(el instanceof Element))return false;const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>75&&r.height>35&&r.width<innerWidth*.85&&r.height<innerHeight*.94&&r.top>=-2&&r.left>=-2&&r.bottom<=innerHeight+2&&r.right<=innerWidth+2&&s.visibility!=='hidden'&&s.display!=='none'&&+s.opacity!==0;};
@@ -69,78 +69,91 @@
   state.items=[];state.anchor=null;state.pending=null;state.busy=false;
   await sleep(150);const image=await shot();const im=await load(image);
   state.base={image,width:im.naturalWidth,height:im.naturalHeight,viewportWidth:innerWidth,viewportHeight:innerHeight};
+  // Collect actual content bounds BEFORE popups are opened; white cards are not whitespace.
+  const selector='header,nav,aside,main,section,article,[role="navigation"],[role="main"],button,a,input,table,[class*="card" i],[class*="panel" i]';
+  state.protectedRects=[];
+  for(const el of document.querySelectorAll(selector)){
+    if(!(el instanceof Element))continue;
+    const r=el.getBoundingClientRect(),sty=getComputedStyle(el);
+    if(r.width<12||r.height<8||r.bottom<0||r.top>innerHeight||r.right<0||r.left>innerWidth||sty.display==='none'||sty.visibility==='hidden')continue;
+    if(r.width>innerWidth*.96&&r.height>innerHeight*.88)continue;
+    state.protectedRects.push({x:Math.max(0,r.x),y:Math.max(0,r.y),w:Math.min(innerWidth,r.right)-Math.max(0,r.x),h:Math.min(innerHeight,r.bottom)-Math.max(0,r.y)});
+  }
   state.active=true;observer();return {message:'Recording started. Interact with popups, then Stop & Save PNG.'};
  }
  async function exportPNG(){
   const base=state.base;if(!base)throw Error('No capture session.');
-  const img=await load(base.image),ratio=base.width/base.viewportWidth,W=base.width,H=base.height;
-  const c=document.createElement('canvas');c.width=W;c.height=H;
-  const ctx=c.getContext('2d');ctx.drawImage(img,0,0);
-  // Sample a downscaled copy of the ORIGINAL screenshot to find unoccupied whitespace.
-  const probe=document.createElement('canvas'),pw=Math.max(1,Math.ceil(W/8)),ph=Math.max(1,Math.ceil(H/8));
-  probe.width=pw;probe.height=ph;const pc=probe.getContext('2d',{willReadFrequently:true});
-  pc.drawImage(img,0,0,pw,ph);const pixels=pc.getImageData(0,0,pw,ph).data;
-  function deviation(x,y,w,h){
-    const x0=Math.max(1,Math.floor(x*pw/W)),x1=Math.min(pw-1,Math.ceil((x+w)*pw/W));
-    const y0=Math.max(1,Math.floor(y*ph/H)),y1=Math.min(ph-1,Math.ceil((y+h)*ph/H));
-    if(x0>=x1||y0>=y1)return Infinity;
-    // Estimate foreground/ink relative to predominant background color within candidate.
-    let sum=[0,0,0],n=0;
-    for(let yy=y0;yy<y1;yy+=3)for(let xx=x0;xx<x1;xx+=3){const k=4*(yy*pw+xx);for(let z=0;z<3;z++)sum[z]+=pixels[k+z];n++;}
-    const mean=sum.map(v=>v/n);let cost=0,samples=0;
-    for(let yy=y0;yy<y1;yy+=2)for(let xx=x0;xx<x1;xx+=2){
-      const k=4*(yy*pw+xx),prev=4*(yy*pw+xx-1),above=4*((yy-1)*pw+xx);
-      const color=Math.max(...[0,1,2].map(z=>Math.abs(pixels[k+z]-mean[z])));
-      const edge=Math.max(...[0,1,2].map(z=>Math.abs(pixels[k+z]-pixels[prev+z])+Math.abs(pixels[k+z]-pixels[above+z])));
-      if(color>32||edge>24)cost++;samples++;
-    }
-    return samples?cost/samples:Infinity;
+  const img=await load(base.image),sx=base.width/base.viewportWidth,sy=base.height/base.viewportHeight,W=base.width,H=base.height;
+  // Identify empty regions using both baseline DOM occupied rectangles and image detail.
+  const probe=document.createElement('canvas'),factor=5;
+  probe.width=Math.ceil(W/factor);probe.height=Math.ceil(H/factor);
+  const pc=probe.getContext('2d',{willReadFrequently:true});pc.drawImage(img,0,0,probe.width,probe.height);
+  const pw=probe.width,ph=probe.height,pixels=pc.getImageData(0,0,pw,ph).data;
+  function intersects(a,b,pad=0){return a.x<b.x+b.w+pad&&a.x+a.w+pad>b.x&&a.y<b.y+b.h+pad&&a.y+a.h+pad>b.y;}
+  const protectedZones=state.protectedRects.filter(r=>r.w>0&&r.h>0).map(r=>({x:r.x*sx,y:r.y*sy,w:r.w*sx,h:r.h*sy}));
+  // Integral image of color/edge variation; prevents mistaking text-heavy white cards for blank space.
+  const stride=pw+1,integral=new Float64Array((pw+1)*(ph+1));
+  for(let y=0;y<ph;y++){let row=0;for(let x=0;x<pw;x++){
+    const i=(y*pw+x)*4,up=((Math.max(0,y-1))*pw+x)*4,left=(y*pw+Math.max(0,x-1))*4;
+    const dx=Math.abs(pixels[i]-pixels[left])+Math.abs(pixels[i+1]-pixels[left+1])+Math.abs(pixels[i+2]-pixels[left+2]);
+    const dy=Math.abs(pixels[i]-pixels[up])+Math.abs(pixels[i+1]-pixels[up+1])+Math.abs(pixels[i+2]-pixels[up+2]);
+    const saturation=Math.max(pixels[i],pixels[i+1],pixels[i+2])-Math.min(pixels[i],pixels[i+1],pixels[i+2]);
+    row+= (dx+dy>40||saturation>30)?1:0;
+    integral[(y+1)*stride+x+1]=integral[y*stride+x+1]+row;
+  }}
+  function ink(p){
+    const x1=Math.max(0,Math.floor(p.x/factor)),y1=Math.max(0,Math.floor(p.y/factor));
+    const x2=Math.min(pw,Math.ceil((p.x+p.w)/factor)),y2=Math.min(ph,Math.ceil((p.y+p.h)/factor));
+    if(x2<=x1||y2<=y1)return 1;
+    return (integral[y2*stride+x2]-integral[y1*stride+x2]-integral[y2*stride+x1]+integral[y1*stride+x1])/((x2-x1)*(y2-y1));
   }
-  const margin=Math.max(12,Math.round(16*ratio)),gap=Math.max(10,Math.round(16*ratio));
-  const positions=[],reserved=[];
-  // Search inside the existing screenshot. Prefer low-ink regions and nearby anchors.
+  const gap=Math.round(12*sx),margin=Math.round(12*sx),reserved=[],placements=[];
+  // Start candidate search nearest each individual trigger, never at a predetermined popup position.
   for(const item of state.items){
-    const w=item.width+6*ratio,h=item.height+6*ratio;
-    const a={x:(item.anchor.x+item.anchor.width/2)*ratio,y:(item.anchor.y+item.anchor.height/2)*ratio};
+    const w=item.width+4,h=item.height+4;
+    const source={x:(item.anchor.x+item.anchor.width/2)*sx,y:(item.anchor.y+item.anchor.height/2)*sy};
     let best=null;
-    for(let y=margin;y+h<H-margin;y+=Math.max(14,Math.round(20*ratio))){
-      for(let x=margin;x+w<W-margin;x+=Math.max(14,Math.round(20*ratio))){
-        if(reserved.some(b=>x<b.x+b.w+gap&&x+w+gap>b.x&&y<b.y+b.h+gap&&y+h+gap>b.y))continue;
-        const ink=deviation(x,y,w,h);
-        const distance=Math.hypot(x+w/2-a.x,y+h/2-a.y);
-        // A strong penalty for nonempty regions, a gentle preference for proximity.
-        const score=ink*24000+distance*.25+(y<Math.min(H*.27,210*ratio)?140:0);
-        if(best===null||score<best.score)best={x,y,w,h,score,ink};
+    for(let y=margin;y+h<=H-margin;y+=Math.max(8,Math.round(12*sy))){
+      for(let x=margin;x+w<=W-margin;x+=Math.max(8,Math.round(12*sx))){
+        const p={x,y,w,h};
+        if(reserved.some(r=>intersects(p,r,gap)))continue;
+        if(protectedZones.some(r=>intersects(p,r,Math.round(4*sx))))continue;
+        const detail=ink(p);
+        if(detail>.014)continue; // reject text, borders, icons and active content
+        const distance=Math.hypot(x+w/2-source.x,y+h/2-source.y);
+        const score=distance+detail*10000;
+        if(!best||score<best.score)best={...p,score};
       }
     }
-    if(!best||best.ink>.09){
-      // Do not cover important page content if no reasonably blank slot exists.
-      // Expand canvas DOWNWARDS, never rightwards, as a fallback.
-      const y=Math.max(H+margin,...reserved.map(b=>b.y+b.h+gap),H+margin);
-      best={x:Math.max(margin,Math.min(W-w-margin,a.x-w/2)),y,w,h,ink:0,extended:true};
+    if(!best){ // No suitable whitespace: preserve source content and extend canvas below.
+      const y=Math.max(H+margin,...reserved.filter(r=>r.y>=H).map(r=>r.y+r.h+gap),H+margin);
+      best={x:Math.max(margin,Math.min(W-w-margin,source.x-w/2)),y,w,h,extended:true};
     }
-    positions.push(best);reserved.push(best);
+    placements.push(best);reserved.push(best);
   }
-  const outHeight=Math.ceil(Math.max(H,...positions.map(p=>p.y+p.h+margin),H));
-  if(outHeight!==H){const old=c.toDataURL('image/png');c.height=outHeight;const oldImg=await load(old);ctx.fillStyle='#f7f7fc';ctx.fillRect(0,0,W,outHeight);ctx.drawImage(oldImg,0,0); }
-  // Setting canvas.height resets context state; draw in current full resolution.
-  for(let i=0;i<state.items.length;i++){
-    const item=state.items[i],p=positions[i],overlay=await load(item.image);
-    const a={x:(item.anchor.x+item.anchor.width/2)*ratio,y:(item.anchor.y+item.anchor.height/2)*ratio};
-    const ex=Math.max(p.x,Math.min(p.x+p.w,a.x)),ey=Math.max(p.y,Math.min(p.y+p.h,a.y));
-    // Connect SOURCE -> popup with an elbow, never reuse another popup's endpoint.
-    ctx.strokeStyle='#008da5';ctx.lineWidth=Math.max(2,2.2*ratio);
-    ctx.beginPath();ctx.moveTo(a.x,a.y);
-    const middleY=a.y+(ey-a.y)*.5;
-    ctx.lineTo(a.x,middleY);ctx.lineTo(ex,middleY);ctx.lineTo(ex,ey);ctx.stroke();
-    ctx.fillStyle='#008da5';ctx.beginPath();ctx.arc(a.x,a.y,Math.max(3,3*ratio),0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.arc(ex,ey,Math.max(3,3*ratio),0,Math.PI*2);ctx.fill();
-    ctx.fillStyle='white';ctx.fillRect(p.x,p.y,p.w,p.h);
-    ctx.drawImage(overlay,p.x+3*ratio,p.y+3*ratio,item.width,item.height);
-    ctx.strokeStyle='#008da5';ctx.lineWidth=Math.max(1,1.5*ratio);ctx.strokeRect(p.x,p.y,p.w,p.h);
+  const height=Math.max(H,...placements.map(p=>p.y+p.h+margin),H);
+  const canvas=document.createElement('canvas');canvas.width=W;canvas.height=Math.ceil(height);
+  const ctx=canvas.getContext('2d');ctx.fillStyle='#f7f7fc';ctx.fillRect(0,0,W,height);ctx.drawImage(img,0,0);
+  // Render connectors first, then popup cards ON TOP. Connector strokes can never cover popup text.
+  for(let i=0;i<placements.length;i++){
+    const p=placements[i],item=state.items[i],source={x:(item.anchor.x+item.anchor.width/2)*sx,y:(item.anchor.y+item.anchor.height/2)*sy};
+    const edge={x:Math.max(p.x,Math.min(p.x+p.w,source.x)),y:Math.max(p.y,Math.min(p.y+p.h,source.y))};
+    // Route from the actual source to the closest popup edge, without entering the popup rectangle.
+    const mid={x:source.x,y:(source.y+edge.y)/2};
+    ctx.strokeStyle='#078a9f';ctx.lineWidth=Math.max(1.2,1.8*sx);ctx.lineJoin='round';
+    ctx.beginPath();ctx.moveTo(source.x,source.y);ctx.lineTo(mid.x,mid.y);ctx.lineTo(edge.x,mid.y);ctx.lineTo(edge.x,edge.y);ctx.stroke();
+    ctx.fillStyle='#078a9f';ctx.beginPath();ctx.arc(source.x,source.y,Math.max(2,2*sx),0,Math.PI*2);ctx.fill();
   }
-  const a=document.createElement('a');a.download='SmartCapture-'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';a.href=c.toDataURL('image/png');document.documentElement.append(a);a.click();a.remove();
-  return {message:'Saved screenshot with '+state.items.length+' anchored popups inside page whitespace.'};
+  for(let i=0;i<placements.length;i++){
+    const p=placements[i],item=state.items[i],overlay=await load(item.image);
+    ctx.fillStyle='#fff';ctx.fillRect(p.x,p.y,p.w,p.h);
+    // Exactly one intrinsic image pixel per output pixel; do not scale the captured popup.
+    ctx.drawImage(overlay,p.x+2,p.y+2);
+    ctx.strokeStyle='#078a9f';ctx.lineWidth=Math.max(1,1.2*sx);ctx.strokeRect(p.x+.5,p.y+.5,p.w-1,p.h-1);
+  }
+  const link=document.createElement('a');link.href=canvas.toDataURL('image/png');link.download='SmartCapture-'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';
+  document.documentElement.appendChild(link);link.click();link.remove();
+  return {message:'Saved '+state.items.length+' popups in nearest safe whitespace.'};
  }
  async function stop(){state.active=false;clearTimeout(state.timer);state.observing?.disconnect();while(state.busy)await sleep(50);return exportPNG();}
  chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
