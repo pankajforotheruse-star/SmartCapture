@@ -32,25 +32,51 @@
   state.pending={target};clearTimeout(state.timer);
   state.timer=setTimeout(()=>record().catch(()=>{}),delay);
  }
+ function effectiveOpacity(el){
+  let opacity=1;
+  for(let n=el;n instanceof Element;n=n.parentElement){
+    const style=getComputedStyle(n);opacity*=Number(style.opacity||1);
+    if(style.visibility==='hidden'||style.display==='none')return 0;
+  }
+  return opacity;
+ }
+ async function waitStable(el){
+  let previous='',matches=0;
+  for(let attempt=0;attempt<15;attempt++){
+    if(!el.isConnected||!visible(el))return false;
+    const r=el.getBoundingClientRect(),label=normalize(textOf(el));
+    const signature=[Math.round(r.x),Math.round(r.y),Math.round(r.width),Math.round(r.height),label].join('|');
+    const moving=[el,el.parentElement].filter(Boolean).some(node=>node.getAnimations?.().some(a=>a.playState==='running'));
+    if(effectiveOpacity(el)>=0.98&&!moving&&signature===previous)matches++;
+    else matches=0;
+    if(matches>=2){await sleep(130);return el.isConnected&&effectiveOpacity(el)>=.98;}
+    previous=signature;await sleep(160);
+  }
+  return false; // Decline to capture a partially transparent, animated popup.
+ }
  async function record(){
   if(!state.active||state.busy||!state.anchor)return;
-  const anchor={...state.anchor};const el=pick(anchor.rect);if(!el)return;
+  const anchor={...state.anchor},el=pick(anchor.rect);if(!el)return;
   const content=normalize(textOf(el));
   const key=[anchor.label,Math.round(anchor.rect.x/12),Math.round(anchor.rect.y/12),content].join('|');
   if(state.items.some(it=>it.key===key))return;
-  if(Date.now()-state.lastCapture<300)return;
   state.busy=true;
   try{
-   const r=el.getBoundingClientRect(),image=await load(await shot());
-   // Use intrinsic screenshot pixels (not CSS pixels) to avoid resampling blur.
-   const sx=image.naturalWidth/innerWidth,sy=image.naturalHeight/innerHeight;
-   const x=Math.max(0,Math.round(r.left*sx)),y=Math.max(0,Math.round(r.top*sy));
-   const w=Math.min(image.naturalWidth-x,Math.round(r.width*sx)),h=Math.min(image.naturalHeight-y,Math.round(r.height*sy));
-   if(w<20||h<20)return;
-   const c=document.createElement('canvas');c.width=w;c.height=h;
-   c.getContext('2d').drawImage(image,x,y,w,h,0,0,w,h);
-   if(!state.items.some(it=>it.key===key))state.items.push({key,label:anchor.label,anchor:anchor.rect,image:c.toDataURL('image/png'),width:w,height:h});
-   state.lastCapture=Date.now();
+    if(!await waitStable(el))return;
+    if(!state.active)return;
+    // Popup may update while waiting. Record the stable content signature.
+    const stableText=normalize(textOf(el));
+    const stableKey=[anchor.label,Math.round(anchor.rect.x/12),Math.round(anchor.rect.y/12),stableText].join('|');
+    if(state.items.some(it=>it.key===stableKey))return;
+    const r=el.getBoundingClientRect(),image=await load(await shot());
+    const sx=image.naturalWidth/innerWidth,sy=image.naturalHeight/innerHeight;
+    const x=Math.max(0,Math.round(r.left*sx)),y=Math.max(0,Math.round(r.top*sy));
+    const w=Math.min(image.naturalWidth-x,Math.round(r.width*sx)),h=Math.min(image.naturalHeight-y,Math.round(r.height*sy));
+    if(w<20||h<20)return;
+    const c=document.createElement('canvas');c.width=w;c.height=h;
+    c.getContext('2d').drawImage(image,x,y,w,h,0,0,w,h);
+    state.items.push({key:stableKey,label:anchor.label,anchor:anchor.rect,image:c.toDataURL('image/png'),width:w,height:h});
+    state.lastCapture=Date.now();
   }finally{state.busy=false;}
  }
  function anchorFrom(target){
