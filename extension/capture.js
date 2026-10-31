@@ -69,91 +69,54 @@
   state.items=[];state.anchor=null;state.pending=null;state.busy=false;
   await sleep(150);const image=await shot();const im=await load(image);
   state.base={image,width:im.naturalWidth,height:im.naturalHeight,viewportWidth:innerWidth,viewportHeight:innerHeight};
-  // Collect actual content bounds BEFORE popups are opened; white cards are not whitespace.
-  const selector='header,nav,aside,main,section,article,[role="navigation"],[role="main"],button,a,input,table,[class*="card" i],[class*="panel" i]';
-  state.protectedRects=[];
-  for(const el of document.querySelectorAll(selector)){
-    if(!(el instanceof Element))continue;
-    const r=el.getBoundingClientRect(),sty=getComputedStyle(el);
-    if(r.width<12||r.height<8||r.bottom<0||r.top>innerHeight||r.right<0||r.left>innerWidth||sty.display==='none'||sty.visibility==='hidden')continue;
-    if(r.width>innerWidth*.96&&r.height>innerHeight*.88)continue;
-    state.protectedRects.push({x:Math.max(0,r.x),y:Math.max(0,r.y),w:Math.min(innerWidth,r.right)-Math.max(0,r.x),h:Math.min(innerHeight,r.bottom)-Math.max(0,r.y)});
+  // Text-level occupancy: never block whole white cards merely because they're containers.
+  const protectedRects=[];const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+  let node,seen=0;
+  while((node=walker.nextNode())&&seen++<18000){
+    if(!node.textContent?.trim()||!node.parentElement)continue;
+    const style=getComputedStyle(node.parentElement);
+    if(style.display==='none'||style.visibility==='hidden'||Number(style.opacity)===0)continue;
+    const range=document.createRange();range.selectNodeContents(node);
+    for(const r of range.getClientRects()){
+      if(r.width<2||r.height<2||r.bottom<=0||r.right<=0||r.left>=innerWidth||r.top>=innerHeight)continue;
+      protectedRects.push({x:Math.max(0,r.left),y:Math.max(0,r.top),w:Math.min(innerWidth,r.right)-Math.max(0,r.left),h:Math.min(innerHeight,r.bottom)-Math.max(0,r.top)});
+    }
   }
+  const controls='button,a,input,select,textarea,svg,canvas,img,[role="button"],[role="img"],[role="checkbox"]';
+  for(const el of document.querySelectorAll(controls)){
+    const r=el.getBoundingClientRect(),sty=getComputedStyle(el);
+    if(r.width<3||r.height<3||r.bottom<0||r.right<0||r.top>=innerHeight||r.left>=innerWidth||sty.visibility==='hidden'||sty.display==='none')continue;
+    if(r.width>innerWidth*.8||r.height>innerHeight*.8)continue;
+    protectedRects.push({x:Math.max(0,r.left),y:Math.max(0,r.top),w:Math.min(innerWidth,r.right)-Math.max(0,r.left),h:Math.min(innerHeight,r.bottom)-Math.max(0,r.top)});
+  }
+  state.protectedRects=protectedRects;
   state.active=true;observer();return {message:'Recording started. Interact with popups, then Stop & Save PNG.'};
  }
  async function exportPNG(){
-  const base=state.base;if(!base)throw Error('No capture session.');
-  const img=await load(base.image),sx=base.width/base.viewportWidth,sy=base.height/base.viewportHeight,W=base.width,H=base.height;
-  // Identify empty regions using both baseline DOM occupied rectangles and image detail.
-  const probe=document.createElement('canvas'),factor=5;
-  probe.width=Math.ceil(W/factor);probe.height=Math.ceil(H/factor);
-  const pc=probe.getContext('2d',{willReadFrequently:true});pc.drawImage(img,0,0,probe.width,probe.height);
-  const pw=probe.width,ph=probe.height,pixels=pc.getImageData(0,0,pw,ph).data;
-  function intersects(a,b,pad=0){return a.x<b.x+b.w+pad&&a.x+a.w+pad>b.x&&a.y<b.y+b.h+pad&&a.y+a.h+pad>b.y;}
-  const protectedZones=state.protectedRects.filter(r=>r.w>0&&r.h>0).map(r=>({x:r.x*sx,y:r.y*sy,w:r.w*sx,h:r.h*sy}));
-  // Integral image of color/edge variation; prevents mistaking text-heavy white cards for blank space.
-  const stride=pw+1,integral=new Float64Array((pw+1)*(ph+1));
-  for(let y=0;y<ph;y++){let row=0;for(let x=0;x<pw;x++){
-    const i=(y*pw+x)*4,up=((Math.max(0,y-1))*pw+x)*4,left=(y*pw+Math.max(0,x-1))*4;
-    const dx=Math.abs(pixels[i]-pixels[left])+Math.abs(pixels[i+1]-pixels[left+1])+Math.abs(pixels[i+2]-pixels[left+2]);
-    const dy=Math.abs(pixels[i]-pixels[up])+Math.abs(pixels[i+1]-pixels[up+1])+Math.abs(pixels[i+2]-pixels[up+2]);
-    const saturation=Math.max(pixels[i],pixels[i+1],pixels[i+2])-Math.min(pixels[i],pixels[i+1],pixels[i+2]);
-    row+= (dx+dy>40||saturation>30)?1:0;
-    integral[(y+1)*stride+x+1]=integral[y*stride+x+1]+row;
-  }}
-  function ink(p){
-    const x1=Math.max(0,Math.floor(p.x/factor)),y1=Math.max(0,Math.floor(p.y/factor));
-    const x2=Math.min(pw,Math.ceil((p.x+p.w)/factor)),y2=Math.min(ph,Math.ceil((p.y+p.h)/factor));
-    if(x2<=x1||y2<=y1)return 1;
-    return (integral[y2*stride+x2]-integral[y1*stride+x2]-integral[y2*stride+x1]+integral[y1*stride+x1])/((x2-x1)*(y2-y1));
+  if(!state.base)throw Error('No capture session.');
+  if(!window.SmartCaptureLayout)throw Error('Layout engine missing. Reload extension and tab.');
+  const b=state.base,img=await load(b.image),sx=b.width/b.viewportWidth,sy=b.height/b.viewportHeight;
+  const obstacles=state.protectedRects.filter(r=>r.w>0&&r.h>0).map(r=>({x:r.x*sx,y:r.y*sy,w:r.w*sx,h:r.h*sy}));
+  const result=window.SmartCaptureLayout.compute({items:state.items,obstacles,image:img,width:b.width,height:b.height,scale:sx});
+  const canvas=document.createElement('canvas');canvas.width=b.width;canvas.height=result.height;
+  const ctx=canvas.getContext('2d');ctx.fillStyle='#f7f7fc';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0);
+  // All connectors are painted BEFORE the popup pixels. Original popup text remains intact.
+  result.routes.forEach((points,i)=>{
+    if(!points||points.length<2)return;
+    ctx.strokeStyle='#078a9f';ctx.lineWidth=Math.max(1.4,sx*1.7);ctx.lineJoin='round';ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);
+    for(const p of points.slice(1))ctx.lineTo(p.x,p.y);
+    ctx.stroke();ctx.fillStyle='#078a9f';ctx.beginPath();ctx.arc(points[0].x,points[0].y,Math.max(2,sx*2),0,Math.PI*2);ctx.fill();
+  });
+  for(let i=0;i<state.items.length;i++){
+    const item=state.items[i],pos=result.positions[i],overlay=await load(item.image);
+    ctx.fillStyle='#fff';ctx.fillRect(pos.x,pos.y,pos.w,pos.h);
+    ctx.drawImage(overlay,pos.x+2,pos.y+2); // native pixels; no resizing
+    ctx.strokeStyle='#078a9f';ctx.lineWidth=Math.max(1,sx);ctx.strokeRect(pos.x+.5,pos.y+.5,pos.w-1,pos.h-1);
   }
-  const gap=Math.round(12*sx),margin=Math.round(12*sx),reserved=[],placements=[];
-  // Start candidate search nearest each individual trigger, never at a predetermined popup position.
-  for(const item of state.items){
-    const w=item.width+4,h=item.height+4;
-    const source={x:(item.anchor.x+item.anchor.width/2)*sx,y:(item.anchor.y+item.anchor.height/2)*sy};
-    let best=null;
-    for(let y=margin;y+h<=H-margin;y+=Math.max(8,Math.round(12*sy))){
-      for(let x=margin;x+w<=W-margin;x+=Math.max(8,Math.round(12*sx))){
-        const p={x,y,w,h};
-        if(reserved.some(r=>intersects(p,r,gap)))continue;
-        if(protectedZones.some(r=>intersects(p,r,Math.round(4*sx))))continue;
-        const detail=ink(p);
-        if(detail>.014)continue; // reject text, borders, icons and active content
-        const distance=Math.hypot(x+w/2-source.x,y+h/2-source.y);
-        const score=distance+detail*10000;
-        if(!best||score<best.score)best={...p,score};
-      }
-    }
-    if(!best){ // No suitable whitespace: preserve source content and extend canvas below.
-      const y=Math.max(H+margin,...reserved.filter(r=>r.y>=H).map(r=>r.y+r.h+gap),H+margin);
-      best={x:Math.max(margin,Math.min(W-w-margin,source.x-w/2)),y,w,h,extended:true};
-    }
-    placements.push(best);reserved.push(best);
-  }
-  const height=Math.max(H,...placements.map(p=>p.y+p.h+margin),H);
-  const canvas=document.createElement('canvas');canvas.width=W;canvas.height=Math.ceil(height);
-  const ctx=canvas.getContext('2d');ctx.fillStyle='#f7f7fc';ctx.fillRect(0,0,W,height);ctx.drawImage(img,0,0);
-  // Render connectors first, then popup cards ON TOP. Connector strokes can never cover popup text.
-  for(let i=0;i<placements.length;i++){
-    const p=placements[i],item=state.items[i],source={x:(item.anchor.x+item.anchor.width/2)*sx,y:(item.anchor.y+item.anchor.height/2)*sy};
-    const edge={x:Math.max(p.x,Math.min(p.x+p.w,source.x)),y:Math.max(p.y,Math.min(p.y+p.h,source.y))};
-    // Route from the actual source to the closest popup edge, without entering the popup rectangle.
-    const mid={x:source.x,y:(source.y+edge.y)/2};
-    ctx.strokeStyle='#078a9f';ctx.lineWidth=Math.max(1.2,1.8*sx);ctx.lineJoin='round';
-    ctx.beginPath();ctx.moveTo(source.x,source.y);ctx.lineTo(mid.x,mid.y);ctx.lineTo(edge.x,mid.y);ctx.lineTo(edge.x,edge.y);ctx.stroke();
-    ctx.fillStyle='#078a9f';ctx.beginPath();ctx.arc(source.x,source.y,Math.max(2,2*sx),0,Math.PI*2);ctx.fill();
-  }
-  for(let i=0;i<placements.length;i++){
-    const p=placements[i],item=state.items[i],overlay=await load(item.image);
-    ctx.fillStyle='#fff';ctx.fillRect(p.x,p.y,p.w,p.h);
-    // Exactly one intrinsic image pixel per output pixel; do not scale the captured popup.
-    ctx.drawImage(overlay,p.x+2,p.y+2);
-    ctx.strokeStyle='#078a9f';ctx.lineWidth=Math.max(1,1.2*sx);ctx.strokeRect(p.x+.5,p.y+.5,p.w-1,p.h-1);
-  }
-  const link=document.createElement('a');link.href=canvas.toDataURL('image/png');link.download='SmartCapture-'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';
-  document.documentElement.appendChild(link);link.click();link.remove();
-  return {message:'Saved '+state.items.length+' popups in nearest safe whitespace.'};
+  const link=document.createElement('a');link.download='SmartCapture-'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';
+  link.href=canvas.toDataURL('image/png');document.documentElement.append(link);link.click();link.remove();
+  return {message:'Saved '+state.items.length+' popups with global placement and obstacle-aware connectors.'};
  }
  async function stop(){state.active=false;clearTimeout(state.timer);state.observing?.disconnect();while(state.busy)await sleep(50);return exportPNG();}
  chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
