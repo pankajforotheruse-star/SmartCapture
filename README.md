@@ -1,14 +1,18 @@
 # SmartCapture
 
+## v0.3 — Context-aware layout
+
+Captured popups are placed in low-detail / unused regions of the **original screenshot**, with a separate connector line from each triggering control. Popups are not forced into a right-hand annex. When no sufficiently blank position is available, export expands **below** the original screenshot rather than covering important information. This is a heuristic prototype; validate on your application.
+
 Free, local-first Chrome/Edge extension for combining temporary interactive popup states into a single screenshot.
 
-## v0.2 — Start / Stop capture
+## v0.3 — Start / Stop capture
 
 1. Open any regular website (already-open tabs are supported).
 2. Click the SmartCapture extension icon and select **Start Capture**.
 3. Click or hover over items you want captured. Leave each popup visible briefly (about one second). Do **not** open the extension while a popup is still needed.
 4. Reopen the extension and select **Stop & Save PNG**.
-5. A single PNG downloads with the original page on the left and captured popups in a dedicated annex on the right. Connector lines identify the originating controls.
+5. A single PNG downloads with the original page and captured popups placed in available page whitespace. Connector lines identify the originating controls.
 
 ## Installation
 
@@ -18,7 +22,7 @@ Download this repository as ZIP, extract it, visit `chrome://extensions` or `edg
 
 - Captures each popup as actual screen pixels at native resolution instead of recreating its content as HTML.
 - De-duplicates popup states by trigger label and position plus normalized popup text.
-- Does not intentionally reposition or obscure original page content; puts captured popups in a dedicated right-hand lane.
+- Does not intentionally reposition or obscure original page content; places captured popups in low-detail whitespace within the original page, falling back to extending the canvas downward.
 - Uses connector lines between source controls and captured popups.
 - No backend, account, or data upload required.
 
