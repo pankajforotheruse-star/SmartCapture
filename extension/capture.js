@@ -1,107 +1,101 @@
 'use strict';
 (() => {
-  if (window.__smartCaptureLoaded) return;
-  window.__smartCaptureLoaded = true;
-  const session={base:null,popups:[],anchor:null,hover:null,busy:false};
-  const wait=ms=>new Promise(r=>setTimeout(r,ms));
-  const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
-  const visible=el=>{
-    if(!(el instanceof Element))return false;
-    const r=el.getBoundingClientRect(),s=getComputedStyle(el);
-    return r.width>=65&&r.height>=30&&r.width<=innerWidth*.95&&r.height<=innerHeight*.95&&r.bottom>0&&r.right>0&&r.top<innerHeight&&r.left<innerWidth&&s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity)!==0;
-  };
-  document.addEventListener('pointerdown',e=>{
-    if(session.busy)return;
-    const el=e.target.closest?.('button,a,[role="button"],[aria-haspopup],input,[tabindex]')||e.target;
-    if(!(el instanceof Element))return;
-    session.anchor={rect:rect(el.getBoundingClientRect()),text:(el.innerText||el.getAttribute('aria-label')||'').trim().slice(0,80)};
-  },true);
-  document.addEventListener('pointermove',e=>{session.hover=e.target;},{passive:true,capture:true});
-  function candidate(){
-    if(!session.anchor)throw Error('Click the popup trigger first.');
-    const a=session.anchor.rect;
-    const options=new Set(document.querySelectorAll('[role="dialog"],[role="tooltip"],[role="menu"],[role="listbox"],[class*="popover" i],[class*="dropdown" i],[class*="tooltip" i],[aria-modal="true"]'));
-    let node=session.hover;
-    for(let n=0;n<5&&node instanceof Element;n++,node=node.parentElement)if(visible(node)&&node.children.length>=1)options.add(node);
-    let best=null,score=-Infinity;
-    for(const el of options){
-      if(!visible(el))continue;
-      const r=el.getBoundingClientRect(),s=getComputedStyle(el);
-      const dx=Math.max(0,r.left-(a.x+a.width),a.x-r.right),dy=Math.max(0,r.top-(a.y+a.height),a.y-r.bottom);
-      const distance=Math.hypot(dx,dy),area=r.width*r.height;
-      const hint=/popover|tooltip|dropdown|dialog|menu/i.test(String(el.className))||el.hasAttribute('role');
-      const layered=['absolute','fixed'].includes(s.position)||Number(s.zIndex)>1;
-      const rating=(hint?300:0)+(layered?125:0)-1.4*distance-Math.abs(area-42000)/1000+(el.contains(session.hover)?180:0);
-      if(rating>score){score=rating;best=el;}
-    }
-    if(!best||score< -400)throw Error('No popup detected. Hover over the open popup and try again.');
-    return best;
+ if(window.__smartCaptureV2)return;
+ window.__smartCaptureV2=true;
+ const state={active:false,base:null,items:[],anchor:null,pending:null,observing:null,busy:false,lastCapture:0};
+ const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
+ const sleep=t=>new Promise(r=>setTimeout(r,t));
+ const visible=el=>{if(!(el instanceof Element))return false;const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>75&&r.height>35&&r.width<innerWidth*.85&&r.height<innerHeight*.94&&r.top>=-2&&r.left>=-2&&r.bottom<=innerHeight+2&&r.right<=innerWidth+2&&s.visibility!=='hidden'&&s.display!=='none'&&+s.opacity!==0;};
+ const textOf=el=>(el.innerText||el.textContent||'').replace(/\s+/g,' ').trim();
+ const normalize=s=>s.toLowerCase().replace(/\s+/g,' ').trim();
+ async function shot(){const r=await chrome.runtime.sendMessage({type:'SCREENSHOT'});if(!r?.image)throw Error(r?.error||'Cannot capture tab');return r.image;}
+ const load=src=>new Promise((ok,bad)=>{const im=new Image();im.onload=()=>ok(im);im.onerror=()=>bad(Error('Image decoding failed'));im.src=src;});
+ function pick(anchor){
+  const pool=new Set(document.querySelectorAll('[role="dialog"],[role="tooltip"],[role="menu"],[role="listbox"],[aria-modal="true"],[class*="popover" i],[class*="dropdown" i],[class*="tooltip" i],[class*="overlay" i]'));
+  if(state.pending?.target instanceof Element){for(let el=state.pending.target,n=0;el&&n<5;el=el.parentElement,n++)pool.add(el);}
+  let result=null,top=-Infinity;
+  for(const el of pool){
+   if(!visible(el))continue;const r=el.getBoundingClientRect(),s=getComputedStyle(el);
+   const content=textOf(el);if(content.length<8||content.length>3500)continue;
+   const dx=Math.max(0,r.left-(anchor.x+anchor.width),anchor.x-r.right),dy=Math.max(0,r.top-(anchor.y+anchor.height),anchor.y-r.bottom);
+   const cls=String(el.className||'');
+   const hint=/tooltip|popover|dropdown|dialog|menu|overlay/i.test(cls)||/dialog|tooltip|menu|listbox/.test(el.getAttribute('role')||'');
+   const layer=['absolute','fixed','sticky'].includes(s.position)||parseInt(s.zIndex,10)>1;
+   if(!hint&&!layer)continue;
+   const score=(hint?200:0)+(layer?100:0)-Math.hypot(dx,dy)*1.4-Math.max(0,r.width*r.height-100000)/2000;
+   if(score>top){top=score;result=el;}
   }
-  const load=src=>new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>resolve(img);img.onerror=()=>reject(Error('Image could not be decoded'));img.src=src;});
-  async function shot(){const r=await chrome.runtime.sendMessage({type:'SCREENSHOT'});if(!r?.image)throw Error(r?.error||'Screenshot failed');return r.image;}
-  async function start(){
-    if(session.busy)throw Error('Capture in progress');session.busy=true;
-    try{await wait(180);session.base={image:await shot(),width:innerWidth,height:innerHeight};session.popups=[];return {message:'Base captured. Click a link, hover its popup, then use Alt+Shift+S.'};}
-    finally{session.busy=false;}
+  return top>-500?result:null;
+ }
+ function schedule(target,delay=320){
+  if(!state.active||!state.anchor)return;
+  state.pending={target};clearTimeout(state.timer);
+  state.timer=setTimeout(()=>record().catch(()=>{}),delay);
+ }
+ async function record(){
+  if(!state.active||state.busy||!state.anchor)return;
+  const anchor={...state.anchor};const el=pick(anchor.rect);if(!el)return;
+  const content=normalize(textOf(el));
+  const key=[anchor.label,Math.round(anchor.rect.x/12),Math.round(anchor.rect.y/12),content].join('|');
+  if(state.items.some(it=>it.key===key))return;
+  if(Date.now()-state.lastCapture<300)return;
+  state.busy=true;
+  try{
+   const r=el.getBoundingClientRect(),image=await load(await shot());
+   // Use intrinsic screenshot pixels (not CSS pixels) to avoid resampling blur.
+   const sx=image.naturalWidth/innerWidth,sy=image.naturalHeight/innerHeight;
+   const x=Math.max(0,Math.round(r.left*sx)),y=Math.max(0,Math.round(r.top*sy));
+   const w=Math.min(image.naturalWidth-x,Math.round(r.width*sx)),h=Math.min(image.naturalHeight-y,Math.round(r.height*sy));
+   if(w<20||h<20)return;
+   const c=document.createElement('canvas');c.width=w;c.height=h;
+   c.getContext('2d').drawImage(image,x,y,w,h,0,0,w,h);
+   if(!state.items.some(it=>it.key===key))state.items.push({key,label:anchor.label,anchor:anchor.rect,image:c.toDataURL('image/png'),width:w,height:h});
+   state.lastCapture=Date.now();
+  }finally{state.busy=false;}
+ }
+ function anchorFrom(target){
+  const el=target?.closest?.('button,a,[role="button"],[aria-haspopup],input,[tabindex]')||target;
+  if(!(el instanceof Element))return;
+  const r=el.getBoundingClientRect();
+  if(r.width>innerWidth*.75||r.height>innerHeight*.6)return;
+  state.anchor={rect:rect(r),label:normalize(textOf(el)||el.getAttribute('aria-label')||el.getAttribute('title')||el.tagName).slice(0,100)};
+ }
+ document.addEventListener('pointerdown',e=>{if(!state.active)return;anchorFrom(e.target);schedule(e.target,340);},true);
+ document.addEventListener('pointerover',e=>{if(!state.active)return;const t=e.target;if(t?.closest?.('button,a,[role="button"],[aria-haspopup],[title],[aria-label]')){anchorFrom(t);schedule(t,550);}else if(state.anchor)schedule(t,380);},true);
+ document.addEventListener('focusin',e=>{if(state.active){anchorFrom(e.target);schedule(e.target,350);}},true);
+ function observer(){state.observing=new MutationObserver(()=>{if(state.active&&state.anchor&&Date.now()-state.lastCapture>550)schedule(state.pending?.target||document.activeElement,420);});state.observing.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style','aria-expanded','aria-hidden']});}
+ async function start(){
+  state.active=false;clearTimeout(state.timer);state.observing?.disconnect();
+  state.items=[];state.anchor=null;state.pending=null;state.busy=false;
+  await sleep(150);const image=await shot();const im=await load(image);
+  state.base={image,width:im.naturalWidth,height:im.naturalHeight,viewportWidth:innerWidth,viewportHeight:innerHeight};
+  state.active=true;observer();return {message:'Recording started. Interact with popups, then Stop & Save PNG.'};
+ }
+ async function exportPNG(){
+  const base=state.base;if(!base)throw Error('No capture session.');
+  const img=await load(base.image);const ratio=base.width/base.viewportWidth;
+  const gutter=24*ratio,left=base.width+gutter,slotWidth=Math.max(310*ratio,...state.items.map(i=>i.width))+32*ratio;
+  let y=24*ratio;const slots=state.items.map(i=>{const slot={x:left+12*ratio,y,width:i.width,height:i.height};y+=i.height+46*ratio;return slot;});
+  const width=state.items.length?Math.ceil(left+slotWidth):base.width;
+  const height=Math.max(base.height,Math.ceil(y+20*ratio));
+  const c=document.createElement('canvas');c.width=width;c.height=height;const ctx=c.getContext('2d');
+  ctx.fillStyle='#f7f7fc';ctx.fillRect(0,0,width,height);ctx.drawImage(img,0,0);
+  if(state.items.length){ctx.fillStyle='#e7f1f5';ctx.fillRect(base.width,0,width-base.width,height);}
+  for(let i=0;i<state.items.length;i++){
+   const it=state.items[i],p=slots[i],im=await load(it.image),ax=(it.anchor.x+it.anchor.width/2)*ratio,ay=(it.anchor.y+it.anchor.height/2)*ratio,ex=p.x,ey=p.y+Math.min(p.height/2,24*ratio);
+   // Connector is drawn across the new margin, not through the original page content.
+   ctx.strokeStyle='#008da5';ctx.lineWidth=2.5*ratio;ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(base.width+8*ratio,ay);ctx.lineTo(base.width+8*ratio,ey);ctx.lineTo(ex,ey);ctx.stroke();
+   ctx.fillStyle='#008da5';ctx.beginPath();ctx.arc(ax,ay,3*ratio,0,Math.PI*2);ctx.fill();
+   ctx.fillStyle='white';ctx.fillRect(p.x-3*ratio,p.y-3*ratio,p.width+6*ratio,p.height+6*ratio);
+   ctx.drawImage(im,p.x,p.y);ctx.strokeStyle='#008da5';ctx.lineWidth=2*ratio;ctx.strokeRect(p.x-2*ratio,p.y-2*ratio,p.width+4*ratio,p.height+4*ratio);
+   ctx.font=`${12*ratio}px Arial`;ctx.fillStyle='#16475a';ctx.fillText((it.label||'Captured popup').slice(0,55),p.x,p.y-8*ratio);
   }
-  async function capture(){
-    if(!session.base)throw Error('Capture the base page first.');
-    if(session.busy)throw Error('Capture already in progress.');session.busy=true;
-    try{
-      const el=candidate(),r=el.getBoundingClientRect();
-      const box={x:Math.max(0,r.left),y:Math.max(0,r.top)};
-      box.width=Math.min(innerWidth,r.right)-box.x;box.height=Math.min(innerHeight,r.bottom)-box.y;
-      if(box.width<65||box.height<30)throw Error('Popup is outside the viewport.');
-      const img=await load(await shot()),sx=img.naturalWidth/innerWidth,sy=img.naturalHeight/innerHeight;
-      const c=document.createElement('canvas');c.width=Math.round(box.width*sx);c.height=Math.round(box.height*sy);
-      c.getContext('2d').drawImage(img,box.x*sx,box.y*sy,box.width*sx,box.height*sy,0,0,c.width,c.height);
-      session.popups.push({image:c.toDataURL('image/png'),width:box.width,height:box.height,anchor:{...session.anchor.rect},label:session.anchor.text});
-      return {message:'Saved popup '+session.popups.length+' from '+(session.anchor.text||'selected control')};
-    }finally{session.busy=false;}
-  }
-  async function exportPNG(){
-    if(!session.base)throw Error('Start a capture session first.');
-    const base=await load(session.base.image),scale=base.naturalWidth/session.base.width,occupied=[],placed=[];
-    let maxX=session.base.width,maxY=session.base.height;
-    for(const p of session.popups){
-      const a=p.anchor,w=p.width,h=p.height,choices=[];
-      for(let ring=0;ring<12;ring++)for(let dir=0;dir<4;dir++){
-        const d=ring*42,positions=[
-          [a.x,a.y+a.height+28+d],
-          [a.x+a.width+28+d,a.y],
-          [a.x-w-28-d,a.y+a.height+18],
-          [a.x+d,a.y-h-28]
-        ];
-        const [px,py]=positions[dir],x=Math.max(12,px),y=Math.max(12,py);
-        const overlap=occupied.reduce((sum,q)=>sum+Math.max(0,Math.min(q.x+q.w,x+w)-Math.max(q.x,x))*Math.max(0,Math.min(q.y+q.h,y+h)-Math.max(q.y,y)),0);
-        const distance=Math.hypot(x-a.x,y-a.y);
-        choices.push({x,y,w,h,cost:overlap*15+distance+Math.max(0,x+w-session.base.width)*.3+Math.max(0,y+h-session.base.height)*.3});
-      }
-      choices.sort((a,b)=>a.cost-b.cost);const pos=choices[0];occupied.push(pos);placed.push(pos);
-      maxX=Math.max(maxX,pos.x+w+18);maxY=Math.max(maxY,pos.y+h+18);
-    }
-    const canvas=document.createElement('canvas');canvas.width=Math.ceil(maxX*scale);canvas.height=Math.ceil(maxY*scale);
-    const ctx=canvas.getContext('2d');ctx.setTransform(scale,0,0,scale,0,0);
-    ctx.fillStyle='#f7f7fc';ctx.fillRect(0,0,maxX,maxY);ctx.drawImage(base,0,0,session.base.width,session.base.height);
-    for(let i=0;i<session.popups.length;i++){
-      const p=session.popups[i],q=placed[i],im=await load(p.image);
-      const start={x:p.anchor.x+p.anchor.width/2,y:p.anchor.y+p.anchor.height/2};
-      const end={x:Math.max(q.x,Math.min(q.x+q.w,start.x)),y:Math.max(q.y,Math.min(q.y+q.h,start.y))};
-      ctx.strokeStyle='#008ba6';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(start.x,start.y);ctx.lineTo(start.x,Math.min(end.y,start.y+28));ctx.lineTo(end.x,end.y);ctx.stroke();
-      ctx.fillStyle='#008ba6';ctx.beginPath();ctx.arc(start.x,start.y,4,0,2*Math.PI);ctx.fill();
-      ctx.shadowColor='rgba(0,0,0,.2)';ctx.shadowBlur=14;ctx.shadowOffsetY=4;ctx.fillStyle='white';ctx.fillRect(q.x-3,q.y-3,q.w+6,q.h+6);ctx.shadowColor='transparent';ctx.shadowBlur=0;ctx.shadowOffsetY=0;
-      ctx.drawImage(im,q.x,q.y,q.w,q.h);ctx.strokeStyle='#008ba6';ctx.lineWidth=2;ctx.strokeRect(q.x-3,q.y-3,q.w+6,q.h+6);
-    }
-    const a=document.createElement('a');a.download='SmartCapture-'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';a.href=canvas.toDataURL('image/png');document.documentElement.appendChild(a);a.click();a.remove();
-    return {message:'Exported '+session.popups.length+' anchored popup(s).'};
-  }
-  async function handle(type){
-    if(type==='STATUS')return {started:!!session.base,count:session.popups.length};
-    if(type==='START')return start();
-    if(type==='CAPTURE')return capture();
-    if(type==='EXPORT')return exportPNG();
-    if(type==='RESET'){session.base=null;session.popups=[];session.anchor=null;return {message:'Capture session reset'};}
-    throw Error('Unknown command');
-  }
-  chrome.runtime.onMessage.addListener((msg,_sender,reply)=>{handle(msg?.type).then(reply).catch(e=>reply({error:e.message}));return true;});
+  const url=c.toDataURL('image/png');const a=document.createElement('a');a.href=url;a.download='SmartCapture-'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';document.documentElement.append(a);a.click();a.remove();
+  return {message:`Saved screenshot containing ${state.items.length} unique popup(s).`};
+ }
+ async function stop(){state.active=false;clearTimeout(state.timer);state.observing?.disconnect();while(state.busy)await sleep(50);return exportPNG();}
+ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
+  const action=msg?.type==='STATUS'?Promise.resolve({active:state.active,count:state.items.length}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
+  action.then(sendResponse).catch(e=>sendResponse({error:e.message}));return true;
+ });
 })();
