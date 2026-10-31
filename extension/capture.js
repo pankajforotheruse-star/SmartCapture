@@ -145,23 +145,33 @@
   const result=window.SmartCaptureLayout.compute({items:state.items,obstacles,routeObstacles,image:img,width:b.width,height:b.height,scale:sx});
   const canvas=document.createElement('canvas');canvas.width=b.width;canvas.height=result.height;
   const ctx=canvas.getContext('2d');ctx.fillStyle='#f7f7fc';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0);
-  // All connectors are painted BEFORE the popup pixels. Original popup text remains intact.
+  const colors=['#067b99','#8153b2','#a35a19','#228158','#b34577'];
+  // Outline the source link, never paint a filled label over its text.
+  for(let i=0;i<state.items.length;i++){
+    const a=state.items[i].anchor,col=colors[i%colors.length];
+    ctx.strokeStyle=col;ctx.lineWidth=Math.max(1.2,sx*1.4);
+    ctx.strokeRect(a.x*sx-2,a.y*sy-2,a.width*sx+4,a.height*sy+4);
+  }
+  // Connectors are routed around protected text. Impossible routes are omitted.
+  // Distinct source/popup outlines remain to preserve the association.
   result.routes.forEach((points,i)=>{
     if(!points||points.length<2)return;
-    ctx.strokeStyle='#078a9f';ctx.lineWidth=Math.max(1.4,sx*1.7);ctx.lineJoin='round';ctx.lineCap='round';
+    ctx.strokeStyle=colors[i%colors.length];ctx.lineWidth=Math.max(1.3,sx*1.7);ctx.lineJoin='round';ctx.lineCap='round';
     ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);
     for(const p of points.slice(1))ctx.lineTo(p.x,p.y);
-    ctx.stroke();ctx.fillStyle='#078a9f';ctx.beginPath();ctx.arc(points[0].x,points[0].y,Math.max(2,sx*2),0,Math.PI*2);ctx.fill();
+    ctx.stroke();
   });
+  // Paint popup imagery last, so no line can pass over captured text.
   for(let i=0;i<state.items.length;i++){
     const item=state.items[i],pos=result.positions[i],overlay=await load(item.image);
     ctx.fillStyle='#fff';ctx.fillRect(pos.x,pos.y,pos.w,pos.h);
-    ctx.drawImage(overlay,pos.x+2,pos.y+2); // native pixels; no resizing
-    ctx.strokeStyle='#078a9f';ctx.lineWidth=Math.max(1,sx);ctx.strokeRect(pos.x+.5,pos.y+.5,pos.w-1,pos.h-1);
+    ctx.drawImage(overlay,pos.x+2,pos.y+2);
+    ctx.strokeStyle=colors[i%colors.length];ctx.lineWidth=Math.max(1.2,sx*1.5);
+    ctx.strokeRect(pos.x+.5,pos.y+.5,pos.w-1,pos.h-1);
   }
   const link=document.createElement('a');link.download='SmartCapture-'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';
   link.href=canvas.toDataURL('image/png');document.documentElement.append(link);link.click();link.remove();
-  return {message:'Saved '+state.items.length+' popups with global placement and obstacle-aware connectors.'};
+  return {message:'Saved '+state.items.length+' popups safely ('+(result.unrouted||0)+' links marked by matching outlines instead of unsafe lines).'};
  }
  async function stop(){state.active=false;clearTimeout(state.timer);state.observing?.disconnect();while(state.busy)await sleep(50);return exportPNG();}
  chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
