@@ -5,7 +5,7 @@
   const clamp=(v,a,b)=>Math.max(a,Math.min(v,b));
   const center=r=>({x:r.x+r.w/2,y:r.y+r.h/2});
   const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
-  function occupancy(image,width,height,obstacles,scale) {
+  function occupancy(image,width,height,obstacles,scale,inkLimit=231) {
     const cell=Math.max(3,Math.round(4*scale)),cols=Math.ceil(width/cell),rows=Math.ceil(height/cell);
     const c=document.createElement('canvas');c.width=cols;c.height=rows;
     const ctx=c.getContext('2d',{willReadFrequently:true});ctx.drawImage(image,0,0,cols,rows);
@@ -15,7 +15,7 @@
       const i=y*cols+x,j=4*i,r=raw[j],g=raw[j+1],b=raw[j+2];
       const contrast=Math.max(r,g,b)-Math.min(r,g,b);
       // Conservative dark/color ink detector; light card surfaces remain available.
-      visual[i]=(Math.min(r,g,b)<231||contrast>31)?1:0;
+      visual[i]=(Math.min(r,g,b)<inkLimit||contrast>45)?1:0;
     }
     const padding=Math.ceil(7*scale/cell);
     for(const r of obstacles){
@@ -130,12 +130,13 @@
     }
     routePoints.push(end);return routePoints;
   }
-  function compute({items,obstacles,image,width,height,scale=1}){
+  function compute({items,obstacles,routeObstacles=obstacles,image,width,height,scale=1}){
     if(!items.length)return {positions:[],routes:[],height};
     const converted=items.map(item=>({...item,anchor:{
       x:item.anchor.x*scale,y:item.anchor.y*scale,w:item.anchor.width*scale,h:item.anchor.height*scale
     }}));
     const occ=occupancy(image,width,height,obstacles,scale);
+    const lineOcc=occupancy(image,width,height,routeObstacles,scale,175);
     const options=converted.map(item=>candidates(item,occ,width,height,scale));
     const positions=layoutAll(converted,options,width,height,scale);
     const resultHeight=Math.ceil(Math.max(height,...positions.map(p=>p.y+p.h+12*scale)));
@@ -150,7 +151,7 @@
       let best=null;
       for(const start of starts.slice(0,2))for(const end of sides){
         const blocks=positions.filter((_,j)=>j!==i);
-        const path=route(start,end,occ,blocks,resultHeight);
+        const path=route(start,end,lineOcc,blocks,resultHeight);
         if(!path)continue;
         const length=path.slice(1).reduce((sum,point,j)=>sum+distance(point,path[j]),0);
         if(!best||length<best.length)best={path,length};
