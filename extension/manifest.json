@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "SmartCapture",
-  "version": "0.1.0",
-  "description": "Capture successive popup states with anchored connectors in one PNG",
+  "version": "0.2.0",
+  "description": "Automatically collect popup states and export one context-linked PNG",
   "permissions": [
     "activeTab",
+    "scripting",
     "tabs",
     "downloads"
   ],
@@ -17,24 +18,5 @@
   "action": {
     "default_title": "SmartCapture",
     "default_popup": "popup.html"
-  },
-  "content_scripts": [
-    {
-      "matches": [
-        "<all_urls>"
-      ],
-      "js": [
-        "capture.js"
-      ],
-      "run_at": "document_idle"
-    }
-  ],
-  "commands": {
-    "capture-popup": {
-      "suggested_key": {
-        "default": "Alt+Shift+S"
-      },
-      "description": "Save the currently visible popup"
-    }
   }
 }
