@@ -1,5 +1,15 @@
 # SmartCapture
 
+## v0.5 — Global layout optimization (experimental)
+
+- Detect actual text fragments and controls as obstacles instead of blocking whole cards.
+- Combine baseline screenshot edge detail with DOM occupancy to reject visually busy regions.
+- Generate popup candidates across the viewport; run beam-search global optimization to avoid popup overlap.
+- Route source-to-popup connectors on an A* grid, preferring obstacle-free paths. If no clean route exists, a high-penalty fallback may cross content; inspect results.
+- Preserve captured popup pixels without scaling. When no safe in-page position exists, extend the canvas downwards.
+- Browser-site integration is not yet verified. A synthetic test of a two-popup layout confirmed distinct boxes and nonempty connector routes, but does not guarantee correct routing on other webpages.
+
+
 ## v0.4 — Safe nearest-whitespace layout\n\nPlacement checks DOM elements and screenshot image detail, then chooses the nearest clear area to each originating control. Connectors are drawn behind popup cards. Original-resolution popup pixels are copied without resizing. Fallback expands downward if no safe area is found. This remains an unverified browser prototype.\n\n## v0.3 — Context-aware layout
 
 Captured popups are placed in low-detail / unused regions of the **original screenshot**, with a separate connector line from each triggering control. Popups are not forced into a right-hand annex. When no sufficiently blank position is available, export expands **below** the original screenshot rather than covering important information. This is a heuristic prototype; validate on your application.
