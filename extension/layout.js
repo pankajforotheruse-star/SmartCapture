@@ -42,7 +42,7 @@
   const unique=[];for(const r of result){if(unique.every(v=>Math.abs(v.x-r.x)+Math.abs(v.y-r.y)>step))unique.push(r);if(unique.length>=18)break;}
   return unique;
  }
- function route(start,end,obstacles,W,H,scale){
+ function route(start,end,obstacles,W,H,scale,soft=false){
   // A* on a coarse grid with obstacle inflation, then orthogonalize and simplify.
   const unit=Math.max(8,Math.round(12*scale)),nx=Math.ceil(W/unit)+1,ny=Math.ceil(H/unit)+1;
   const point=(x,y)=>({x:clamp(Math.round(x/unit),0,nx-1),y:clamp(Math.round(y/unit),0,ny-1)});
@@ -65,8 +65,8 @@
    if(cur.x===b.x&&cur.y===b.y){reached=true;break;}
    for(let d=0;d<4;d++){
     const x=cur.x+dirs[d][0],y=cur.y+dirs[d][1];if(x<0||y<0||x>=nx||y>=ny)continue;
-    const next=key(x,y);if(blocked[next])continue;
-    const g=cur.g+1+(cur.direction>=0&&cur.direction!==d?.35:0);
+    const next=key(x,y);if(blocked[next]&&!soft)continue;
+    const g=cur.g+1+(blocked[next]?75:0)+(cur.direction>=0&&cur.direction!==d?.35:0);
     if(g>=costs[next])continue;
     costs[next]=g;previous[next]=k;turns[next]=d;
     queue.push({x,y,g,f:g+Math.abs(x-b.x)+Math.abs(y-b.y),direction:d});
@@ -115,7 +115,9 @@
    const blocks=[...obstacles.filter(o=>!overlap(o,popupItems[i].anchor,2)),...positions];
    let best=null;
    for(const edge of sides){
-    const path=route(a,edge,blocks.filter(o=>o!==pos),W,Math.max(H,...positions.map(p=>p.y+p.h))+24*scale,scale);
+    const routeObstacles=blocks.filter(o=>o!==pos);
+    const routeHeight=Math.max(H,...positions.map(p=>p.y+p.h))+24*scale;
+    const path=route(a,edge,routeObstacles,W,routeHeight,scale)||route(a,edge,routeObstacles,W,routeHeight,scale,true);
     if(path){const length=path.slice(1).reduce((sum,p,j)=>sum+dist(p,path[j]),0);if(!best||length<best.length)best={path,length};}
    }
    return best?.path||null;
