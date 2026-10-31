@@ -1,5 +1,12 @@
 # SmartCapture
 
+## v0.6 — Safety-first capture (experimental)
+
+After v0.5 caused regressions, the layout engine was replaced with strict occupancy checks. It uses baseline DOM text and control bounds, screenshot ink, and panel boundary lines to reject positions that could cover existing content. It searches for safe positions, considers multiple popups together, and extends below the original screenshot if necessary. Connectors use an obstacle-avoiding grid; **a connector is omitted if no safe route is found** rather than drawing across text. Capture now waits for a popup to be stable and fully opaque, avoiding screenshots taken mid-fade; a popup that never settles may be missed. These safeguards have synthetic regression tests, not yet verified against the business application.
+
+Run `node --test tests/layout.test.cjs` to execute layout regressions. GitHub Actions also checks the project on pushes.
+
+
 ## v0.5 — Global layout optimization (experimental)
 
 - Detect actual text fragments and controls as obstacles instead of blocking whole cards.
