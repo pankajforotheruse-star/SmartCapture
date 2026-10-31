@@ -1,6 +1,6 @@
 # SmartCapture
 
-## v0.3 — Context-aware layout
+## v0.4 — Safe nearest-whitespace layout\n\nPlacement checks DOM elements and screenshot image detail, then chooses the nearest clear area to each originating control. Connectors are drawn behind popup cards. Original-resolution popup pixels are copied without resizing. Fallback expands downward if no safe area is found. This remains an unverified browser prototype.\n\n## v0.3 — Context-aware layout
 
 Captured popups are placed in low-detail / unused regions of the **original screenshot**, with a separate connector line from each triggering control. Popups are not forced into a right-hand annex. When no sufficiently blank position is available, export expands **below** the original screenshot rather than covering important information. This is a heuristic prototype; validate on your application.
 
