@@ -52,7 +52,7 @@
     const best=[];
     for(const r of found){
       if(best.some(p=>Math.abs(p.x-r.x)<step&&Math.abs(p.y-r.y)<step))continue;
-      best.push(r);if(best.length===24)break;
+      best.push(r);if(best.length===180)break;
     }
     return best;
   }
@@ -69,13 +69,19 @@
       if(!beam.length)break;
     }
     if(beam.length&&beam[0].positions.length===items.length)return beam[0].positions;
-    // Guaranteed safe fallback: place all popups BELOW the screenshot, not on top of the page.
-    let y=height+Math.round(18*scale);
-    return items.map(item=>{
-      const w=item.width+4,h=item.height+4;
-      const x=clamp(center(item.anchor).x-w/2,12,Math.max(12,width-w-12));
-      const p={x,y,w,h,extended:true};y+=h+Math.round(18*scale);return p;
-    });
+    // If all-in-page combination is unavailable, keep individually safe placements.
+    // Prefer larger popups first, so narrow/short ones fill remaining gaps.
+    const chosen=new Array(items.length),order=items.map((_,i)=>i).sort((a,b)=>
+      (items[b].width*items[b].height)-(items[a].width*items[a].height));
+    let below=height+Math.round(18*scale);
+    for(const i of order){
+      const p=options[i].find(candidate=>chosen.every(q=>!q||!overlap(candidate,q,12*scale)));
+      if(p){chosen[i]=p;continue;}
+      const w=items[i].width+4,h=items[i].height+4;
+      const x=clamp(center(items[i].anchor).x-w/2,12,Math.max(12,width-w-12));
+      chosen[i]={x,y:below,w,h,extended:true};below+=h+Math.round(18*scale);
+    }
+    return chosen;
   }
   function route(start,end,base,extra,height){
     const cell=Math.max(8,base.cell*3),nx=Math.ceil(base.cols*base.cell/cell),ny=Math.ceil(height/cell);
