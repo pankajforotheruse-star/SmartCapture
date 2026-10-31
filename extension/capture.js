@@ -115,6 +115,23 @@
     if(r.width>innerWidth*.8||r.height>innerHeight*.8)continue;
     protectedRects.push({x:Math.max(0,r.left),y:Math.max(0,r.top),w:Math.min(innerWidth,r.right)-Math.max(0,r.left),h:Math.min(innerHeight,r.bottom)-Math.max(0,r.top)});
   }
+  // Protect panel/card outlines, but NOT their empty interiors.
+  // This stops a popup from straddling a statistics card or page section.
+  const panels='header,nav,aside,main,section,article,[role="navigation"],[role="main"],[class*="card" i],[class*="panel" i],[class*="statistic" i]';
+  let panelCount=0;
+  for(const el of document.querySelectorAll(panels)){
+    if(panelCount++>3500)break;
+    const r=el.getBoundingClientRect(),sty=getComputedStyle(el);
+    if(sty.display==='none'||sty.visibility==='hidden'||r.width<120||r.height<48||r.right<=0||r.bottom<=0||r.left>=innerWidth||r.top>=innerHeight)continue;
+    const x=Math.max(0,r.left),y=Math.max(0,r.top),w=Math.min(innerWidth,r.right)-x,h=Math.min(innerHeight,r.bottom)-y;
+    if(w<=0||h<=0)continue;
+    if(el.matches('header,nav,aside,[role="navigation"]')&&w*h<innerWidth*innerHeight*.6){
+      protectedRects.push({x,y,w,h});continue;
+    }
+    const thickness=3;
+    protectedRects.push({x,y,w,h:thickness},{x,y:y+h-thickness,w,h:thickness});
+    protectedRects.push({x,y,w:thickness,h},{x:x+w-thickness,y,w:thickness,h});
+  }
   state.protectedRects=protectedRects;
   state.active=true;observer();return {message:'Recording started. Interact with popups, then Stop & Save PNG.'};
  }
