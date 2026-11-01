@@ -23,6 +23,8 @@
       const r=element.getBoundingClientRect?.();
       if(!r||r.width<3||r.height<3||r.width>125||r.height>85)continue;
       const tag=element.tagName?.toLowerCase()||'';
+      // SVG paths can be just a few pixels across; anchor to the enclosing icon.
+      if(['path','circle','rect','line','polygon','polyline','g','use'].includes(tag))continue;
       const classes=String(element.getAttribute?.('class')||'');
       const style=styleOf(element);
       if(tags.has(tag)||marker.test(classes)||style?.cursor==='pointer')return element;
