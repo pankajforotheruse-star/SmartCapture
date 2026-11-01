@@ -2,7 +2,7 @@
 (() => {
  if(window.__smartCaptureV10)return;
  window.__smartCaptureV10=true;
- const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),errors:[]};
+ const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),lastFloatingScan:0,errors:[]};
  const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
  const sleep=t=>new Promise(r=>setTimeout(r,t));
  const visible=el=>{if(!(el instanceof Element))return false;const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>75&&r.height>35&&r.width<innerWidth*.85&&r.height<innerHeight*.94&&r.top>=-2&&r.left>=-2&&r.bottom<=innerHeight+2&&r.right<=innerWidth+2&&s.visibility!=='hidden'&&s.display!=='none'&&+s.opacity!==0;};
@@ -18,6 +18,25 @@
      found.add(el);
    }
    return [...found].filter(visible);
+ }
+ function scanFloatingFallback(force=false){
+   // Framework-independent fallback for CSS-only hover panels: they may toggle
+   // :hover visibility without DOM mutations or conventional tooltip class names.
+   if(!force&&Date.now()-state.lastFloatingScan<300)return;
+   state.lastFloatingScan=Date.now();
+   const helper=window.SmartCaptureHover,view={width:innerWidth,height:innerHeight};
+   let count=0;
+   for(const el of document.querySelectorAll('body *')){
+     if(++count>6500)break; // bounded work on large applications
+     const box=el.getBoundingClientRect();
+     if(box.width<75||box.height<28||box.width>innerWidth*.87||box.height>innerHeight*.96)continue;
+     const style=getComputedStyle(el);
+     if(!['absolute','fixed'].includes(style.position)&&!(Number.parseInt(style.zIndex,10)>1))continue;
+     if(!helper.floating(el,()=>style,view))continue;
+     const text=textOf(el);
+     if(text.length<6||text.length>4500)continue;
+     state.dynamicPopups.add(el);
+   }
  }
  function effectiveOpacity(el){
    let opacity=1;
@@ -69,7 +88,8 @@
  }
  async function captureTrigger(info){
    if(!state.active)return false;
-   const el=pick(info);
+   let el=pick(info);
+   if(!el){scanFloatingFallback();el=pick(info);}
    if(!el||!await waitStable(el)||!state.active)return false;
    const association=window.SmartCaptureAssociation;
    const stableText=normalize(textOf(el)),id=info.id+'|'+stableText;
@@ -172,6 +192,7 @@
   if(!window.SmartCaptureTracker||!window.SmartCaptureAssociation||!window.SmartCaptureHover)throw Error('Capture modules missing. Reload extension.');
   await sleep(150);const image=await shot();const im=await load(image);
   state.base={image,width:im.naturalWidth,height:im.naturalHeight,viewportWidth:innerWidth,viewportHeight:innerHeight};
+  scanFloatingFallback(true); // establish baseline before any new hover or click
   // Text-level occupancy: never block whole white cards merely because they're containers.
   const protectedRects=[];const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
   let node,seen=0;
