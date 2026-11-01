@@ -1,7 +1,7 @@
 'use strict';
 (() => {
- if(window.__smartCaptureV12)return;
- window.__smartCaptureV12=true;
+ if(window.__smartCaptureV121)return;
+ window.__smartCaptureV121=true;
  const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),lastFloatingScan:0,errors:[],sourceIds:new WeakMap(),nextSourceId:0,debug:{hoverEvents:0,hoverShots:0,hoverSaved:0,rejections:{'not-stable':0,clipped:0}}};
  const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
  const sleep=t=>new Promise(r=>setTimeout(r,t));
@@ -375,7 +375,7 @@
    return output;
  }
  chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
-  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.12.0',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0,hoverShots:state.debug.hoverShots,hoverSaved:state.debug.hoverSaved,rejections:state.debug.rejections}):msg?.type==='METRICS'?Promise.resolve({items:state.items.map(i=>({kind:i.kind,width:i.width,height:i.height,anchor:i.anchor,minFontPx:i.minFontPx})),layout:state.layoutDiagnostics||null}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
+  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.12.1',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0,hoverShots:state.debug.hoverShots,hoverSaved:state.debug.hoverSaved,rejections:state.debug.rejections}):msg?.type==='METRICS'?Promise.resolve({items:state.items.map(i=>({kind:i.kind,width:i.width,height:i.height,anchor:i.anchor,minFontPx:i.minFontPx})),layout:state.layoutDiagnostics||null}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
   action.then(sendResponse).catch(e=>sendResponse({error:e.message}));return true;
  });
 })();
