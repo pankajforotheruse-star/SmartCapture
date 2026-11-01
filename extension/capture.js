@@ -2,7 +2,7 @@
 (() => {
  if(window.__smartCaptureV11)return;
  window.__smartCaptureV11=true;
- const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),lastFloatingScan:0,errors:[]};
+ const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),lastFloatingScan:0,errors:[],debug:{hoverEvents:0,hoverShots:0,hoverSaved:0}};
  const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
  const sleep=t=>new Promise(r=>setTimeout(r,t));
  const visible=el=>{if(!(el instanceof Element))return false;const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>75&&r.height>35&&r.width<innerWidth*.85&&r.height<innerHeight*.94&&r.top>=-2&&r.left>=-2&&r.bottom<=innerHeight+2&&r.right<=innerWidth+2&&s.visibility!=='hidden'&&s.display!=='none'&&+s.opacity!==0;};
@@ -96,7 +96,7 @@
      if(!state.active)return false;
      let data;
      try{data=await shot();}catch(e){state.errors.push('hover screenshot: '+e.message);return false;}
-     state.lastShot=Date.now();
+     state.lastShot=Date.now();state.debug.hoverShots++;
      const image=await load(data);
      const region=window.SmartCaptureVisualDiff.fromImages(
        state.baseDecoded,image,info.anchor,{width:state.base.viewportWidth,height:state.base.viewportHeight});
@@ -110,6 +110,7 @@
        region.x,region.y,region.width,region.height,0,0,crop.width,crop.height);
      state.items.push({key:near,label:info.label,anchor:info.anchor,image:crop.toDataURL('image/png'),
        width:crop.width,height:crop.height});
+     state.debug.hoverSaved++;
      return true;
    };
    const queued=state.shotQueue.catch(()=>{}).then(job);
@@ -189,6 +190,7 @@
    const existing=state.events.get(id);
    if(existing&&method!=='click'&&Date.now()-existing.timestamp<750)return; // dedupe nested hover events but permit retry on rehover
    if(existing&&Date.now()-existing.clickedAt<800)return;
+   if(method==='hover')state.debug.hoverEvents++;
    const visibleBefore=new Map(popupElements().map(el=>[el,normalize(textOf(el))]));
    const info={id,anchor:a,label:src.label,target:src.source,method,timestamp:Date.now(),
      visibleBefore,clickedAt:method==='click'?Date.now():(existing?.clickedAt||0)};
@@ -228,7 +230,8 @@
  }
  async function start(){
   state.active=false;state.observing?.disconnect();state.tracker?.reset();
-  state.items=[];state.events.clear();state.claims.clear();state.dynamicPopups.clear();state.errors=[];state.shotQueue=Promise.resolve();state.lastShot=0;
+  state.items=[];state.events.clear();state.claims.clear();state.dynamicPopups.clear();state.errors=[];
+  state.debug={hoverEvents:0,hoverShots:0,hoverSaved:0};state.shotQueue=Promise.resolve();state.lastShot=0;
   if(!window.SmartCaptureTracker||!window.SmartCaptureAssociation||!window.SmartCaptureHover||!window.SmartCaptureVisualDiff)throw Error('Capture modules missing. Reload extension.');
   await sleep(150);const image=await shot();const im=await load(image);
   state.base={image,width:im.naturalWidth,height:im.naturalHeight,viewportWidth:innerWidth,viewportHeight:innerHeight};
@@ -323,10 +326,12 @@
    const output=await exportPNG();
    output.message+=' Captured '+results.captured+' of '+results.seen+' detected interactions.';
    if(results.pending)output.message+=' '+results.pending+' did not produce a stable popup.';
+   output.message+=' Hover diagnostics: '+state.debug.hoverEvents+' events, '+state.debug.hoverShots+' screenshots, '+state.debug.hoverSaved+' visually saved.';
+   if(state.errors.length)output.message+=' '+state.errors.length+' screenshot/capture error(s).';
    return output;
  }
  chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
-  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.11.0',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
+  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.11.0',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0,hoverShots:state.debug.hoverShots,hoverSaved:state.debug.hoverSaved}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
   action.then(sendResponse).catch(e=>sendResponse({error:e.message}));return true;
  });
 })();
