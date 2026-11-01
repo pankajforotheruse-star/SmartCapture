@@ -1,7 +1,7 @@
 'use strict';
 (() => {
- if(window.__smartCaptureV10)return;
- window.__smartCaptureV10=true;
+ if(window.__smartCaptureV11)return;
+ window.__smartCaptureV11=true;
  const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),lastFloatingScan:0,errors:[]};
  const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
  const sleep=t=>new Promise(r=>setTimeout(r,t));
@@ -86,8 +86,43 @@
    }
    return false;
  }
+ async function visualCapture(info){
+   // Images are compared at native resolution; triggered hover changes are not
+   // required to have a particular HTML class, role or position.
+   if(!state.active||!state.baseDecoded||!window.SmartCaptureVisualDiff)return false;
+   const job=async()=>{
+     const elapsed=Date.now()-state.lastShot;
+     if(elapsed<530)await sleep(530-elapsed); // Chrome visible-tab capture quota
+     if(!state.active)return false;
+     let data;
+     try{data=await shot();}catch(e){state.errors.push('hover screenshot: '+e.message);return false;}
+     state.lastShot=Date.now();
+     const image=await load(data);
+     const region=window.SmartCaptureVisualDiff.fromImages(
+       state.baseDecoded,image,info.anchor,{width:state.base.viewportWidth,height:state.base.viewportHeight});
+     if(!region)return false;
+     const near=info.id+'|visual|'+Math.round(region.x/20)+':'+Math.round(region.y/20)+':'+
+       Math.round(region.width/20)+':'+Math.round(region.height/20);
+     if(state.items.some(item=>item.key===near))return true;
+     const crop=document.createElement('canvas');
+     crop.width=Math.round(region.width);crop.height=Math.round(region.height);
+     crop.getContext('2d').drawImage(image,
+       region.x,region.y,region.width,region.height,0,0,crop.width,crop.height);
+     state.items.push({key:near,label:info.label,anchor:info.anchor,image:crop.toDataURL('image/png'),
+       width:crop.width,height:crop.height});
+     return true;
+   };
+   const queued=state.shotQueue.catch(()=>{}).then(job);
+   state.shotQueue=queued.catch(e=>state.errors.push('hover job: '+String(e?.message||e)));
+   return queued;
+ }
  async function captureTrigger(info){
    if(!state.active)return false;
+   if(info.method==='hover'){
+     const visual=await visualCapture(info);
+     if(visual)return true;
+     // Fallback to DOM crop if a very faint popup was not detectable visually.
+   }
    let el=pick(info);
    if(!el){scanFloatingFallback();el=pick(info);}
    if(!el||!await waitStable(el)||!state.active)return false;
@@ -152,7 +187,7 @@
    if(method==='hover'&&!window.SmartCaptureAssociation?.hoverEligible(src.source))return;
    const a=src.anchor,id=[Math.round(a.x/6),Math.round(a.y/6),Math.round(a.width/6),Math.round(a.height/6),src.label].join(':');
    const existing=state.events.get(id);
-   if(existing&&method!=='click')return; // don't overwrite the opening click with later focus/hover
+   if(existing&&method!=='click'&&Date.now()-existing.timestamp<750)return; // dedupe nested hover events but permit retry on rehover
    if(existing&&Date.now()-existing.clickedAt<800)return;
    const visibleBefore=new Map(popupElements().map(el=>[el,normalize(textOf(el))]));
    const info={id,anchor:a,label:src.label,target:src.source,method,timestamp:Date.now(),
@@ -194,9 +229,10 @@
  async function start(){
   state.active=false;state.observing?.disconnect();state.tracker?.reset();
   state.items=[];state.events.clear();state.claims.clear();state.dynamicPopups.clear();state.errors=[];state.shotQueue=Promise.resolve();state.lastShot=0;
-  if(!window.SmartCaptureTracker||!window.SmartCaptureAssociation||!window.SmartCaptureHover)throw Error('Capture modules missing. Reload extension.');
+  if(!window.SmartCaptureTracker||!window.SmartCaptureAssociation||!window.SmartCaptureHover||!window.SmartCaptureVisualDiff)throw Error('Capture modules missing. Reload extension.');
   await sleep(150);const image=await shot();const im=await load(image);
   state.base={image,width:im.naturalWidth,height:im.naturalHeight,viewportWidth:innerWidth,viewportHeight:innerHeight};
+  state.baseDecoded=im;state.lastShot=Date.now();
   scanFloatingFallback(true); // establish baseline before any new hover or click
   // Text-level occupancy: never block whole white cards merely because they're containers.
   const protectedRects=[];const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
@@ -290,7 +326,7 @@
    return output;
  }
  chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
-  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.10.0',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
+  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.11.0',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
   action.then(sendResponse).catch(e=>sendResponse({error:e.message}));return true;
  });
 })();
