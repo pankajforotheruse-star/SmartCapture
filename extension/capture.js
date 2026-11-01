@@ -276,7 +276,7 @@
     protectedRects.push({x,y,w:thickness,h},{x:x+w-thickness,y,w:thickness,h});
   }
   state.protectedRects=protectedRects;
-  state.tracker=window.SmartCaptureTracker.create({capture:captureTrigger,delay:85});
+  state.tracker=window.SmartCaptureTracker.create({capture:captureTrigger,delay:175});
   state.active=true;observer();return {message:'Recording started. Interact with popups, then Stop & Save PNG.'};
  }
  async function exportPNG(){
