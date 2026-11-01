@@ -2,7 +2,7 @@
 (() => {
  if(window.__smartCaptureV2)return;
  window.__smartCaptureV2=true;
- const state={active:false,base:null,items:[],anchor:null,pending:null,observing:null,busy:false,lastCapture:0,protectedRects:[]};
+ const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),errors:[]};
  const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
  const sleep=t=>new Promise(r=>setTimeout(r,t));
  const visible=el=>{if(!(el instanceof Element))return false;const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>75&&r.height>35&&r.width<innerWidth*.85&&r.height<innerHeight*.94&&r.top>=-2&&r.left>=-2&&r.bottom<=innerHeight+2&&r.right<=innerWidth+2&&s.visibility!=='hidden'&&s.display!=='none'&&+s.opacity!==0;};
@@ -10,89 +10,131 @@
  const normalize=s=>s.toLowerCase().replace(/\s+/g,' ').trim();
  async function shot(){const r=await chrome.runtime.sendMessage({type:'SCREENSHOT'});if(!r?.image)throw Error(r?.error||'Cannot capture tab');return r.image;}
  const load=src=>new Promise((ok,bad)=>{const im=new Image();im.onload=()=>ok(im);im.onerror=()=>bad(Error('Image decoding failed'));im.src=src;});
- function pick(anchor){
-  const pool=new Set(document.querySelectorAll('[role="dialog"],[role="tooltip"],[role="menu"],[role="listbox"],[aria-modal="true"],[class*="popover" i],[class*="dropdown" i],[class*="tooltip" i],[class*="overlay" i]'));
-  if(state.pending?.target instanceof Element){for(let el=state.pending.target,n=0;el&&n<5;el=el.parentElement,n++)pool.add(el);}
-  let result=null,top=-Infinity;
-  for(const el of pool){
-   if(!visible(el))continue;const r=el.getBoundingClientRect(),s=getComputedStyle(el);
-   const content=textOf(el);if(content.length<8||content.length>3500)continue;
-   const dx=Math.max(0,r.left-(anchor.x+anchor.width),anchor.x-r.right),dy=Math.max(0,r.top-(anchor.y+anchor.height),anchor.y-r.bottom);
-   const cls=String(el.className||'');
-   const hint=/tooltip|popover|dropdown|dialog|menu|overlay/i.test(cls)||/dialog|tooltip|menu|listbox/.test(el.getAttribute('role')||'');
-   const layer=['absolute','fixed','sticky'].includes(s.position)||parseInt(s.zIndex,10)>1;
-   if(!hint&&!layer)continue;
-   const score=(hint?200:0)+(layer?100:0)-Math.hypot(dx,dy)*1.4-Math.max(0,r.width*r.height-100000)/2000;
-   if(score>top){top=score;result=el;}
-  }
-  return top>-500?result:null;
- }
- function schedule(target,delay=320){
-  if(!state.active||!state.anchor)return;
-  state.pending={target};clearTimeout(state.timer);
-  state.timer=setTimeout(()=>record().catch(()=>{}),delay);
- }
+ const popupSelector='[role="dialog"],[role="tooltip"],[role="menu"],[role="listbox"],[aria-modal="true"],[class*="popover" i],[class*="popup" i],[class*="dropdown" i],[class*="tooltip" i],[class*="overlay" i],[class*="floating" i]';
+ function popupElements(){return Array.from(document.querySelectorAll(popupSelector)).filter(visible);}
  function effectiveOpacity(el){
-  let opacity=1;
-  for(let n=el;n instanceof Element;n=n.parentElement){
-    const style=getComputedStyle(n);opacity*=Number(style.opacity||1);
-    if(style.visibility==='hidden'||style.display==='none')return 0;
-  }
-  return opacity;
+   let opacity=1;
+   for(let n=el;n instanceof Element;n=n.parentElement){
+     const s=getComputedStyle(n);opacity*=Number(s.opacity||1);
+     if(s.visibility==='hidden'||s.display==='none')return 0;
+   }
+   return opacity;
+ }
+ function pick(info){
+   const pool=popupElements(),a=info.anchor;
+   let winner=null,best=-Infinity;
+   for(const el of pool){
+     if(el===info.target||el.contains(info.target))continue;
+     const r=el.getBoundingClientRect(),label=textOf(el);
+     if(label.length<6||label.length>4500)continue;
+     const s=getComputedStyle(el),classes=String(el.className||'');
+     const hinted=/popover|popup|tooltip|dropdown|dialog|menu|overlay|floating/i.test(classes)||el.hasAttribute('role');
+     const layer=['absolute','fixed','sticky'].includes(s.position)||parseInt(s.zIndex,10)>1;
+     if(!hinted&&!layer)continue;
+     const dx=Math.max(0,r.left-(a.x+a.width),a.x-r.right);
+     const dy=Math.max(0,r.top-(a.y+a.height),a.y-r.bottom);
+     const newlyVisible=!info.visibleBefore.has(el);
+     const score=(newlyVisible?450:0)+(hinted?200:0)+(layer?80:0)-Math.hypot(dx,dy)*1.5-r.width*r.height/12000;
+     if(score>best){best=score;winner=el;}
+   }
+   return best>-420?winner:null;
  }
  async function waitStable(el){
-  let previous='',matches=0;
-  for(let attempt=0;attempt<15;attempt++){
-    if(!el.isConnected||!visible(el))return false;
-    const r=el.getBoundingClientRect(),label=normalize(textOf(el));
-    const signature=[Math.round(r.x),Math.round(r.y),Math.round(r.width),Math.round(r.height),label].join('|');
-    const moving=[el,el.parentElement].filter(Boolean).some(node=>node.getAnimations?.().some(a=>a.playState==='running'));
-    if(effectiveOpacity(el)>=0.98&&!moving&&signature===previous)matches++;
-    else matches=0;
-    if(matches>=2){await sleep(130);return el.isConnected&&effectiveOpacity(el)>=.98;}
-    previous=signature;await sleep(160);
-  }
-  return false; // Decline to capture a partially transparent, animated popup.
+   let previous='',matches=0;
+   for(let attempt=0;attempt<9;attempt++){
+     if(!el.isConnected||!visible(el))return false;
+     const r=el.getBoundingClientRect();
+     const signature=[Math.round(r.x),Math.round(r.y),Math.round(r.width),Math.round(r.height),normalize(textOf(el))].join('|');
+     const animating=el.getAnimations?.({subtree:false}).some(anim=>anim.playState==='running');
+     if(effectiveOpacity(el)>.97&&!animating&&previous===signature)matches++;
+     else matches=0;
+     if(matches>=1)return true;
+     previous=signature;await sleep(95);
+   }
+   return false;
  }
- async function record(){
-  if(!state.active||state.busy||!state.anchor)return;
-  const anchor={...state.anchor},el=pick(anchor.rect);if(!el)return;
-  const content=normalize(textOf(el));
-  const key=[anchor.label,Math.round(anchor.rect.x/12),Math.round(anchor.rect.y/12),content].join('|');
-  if(state.items.some(it=>it.key===key))return;
-  state.busy=true;
-  try{
-    if(!await waitStable(el))return;
-    if(!state.active)return;
-    // Popup may update while waiting. Record the stable content signature.
-    const stableText=normalize(textOf(el));
-    const stableKey=[anchor.label,Math.round(anchor.rect.x/12),Math.round(anchor.rect.y/12),stableText].join('|');
-    if(state.items.some(it=>it.key===stableKey))return;
-    const r=el.getBoundingClientRect(),image=await load(await shot());
-    const sx=image.naturalWidth/innerWidth,sy=image.naturalHeight/innerHeight;
-    const x=Math.max(0,Math.round(r.left*sx)),y=Math.max(0,Math.round(r.top*sy));
-    const w=Math.min(image.naturalWidth-x,Math.round(r.width*sx)),h=Math.min(image.naturalHeight-y,Math.round(r.height*sy));
-    if(w<20||h<20)return;
-    const c=document.createElement('canvas');c.width=w;c.height=h;
-    c.getContext('2d').drawImage(image,x,y,w,h,0,0,w,h);
-    state.items.push({key:stableKey,label:anchor.label,anchor:anchor.rect,image:c.toDataURL('image/png'),width:w,height:h});
-    state.lastCapture=Date.now();
-  }finally{state.busy=false;}
+ async function captureTrigger(info){
+   if(!state.active)return false;
+   const el=pick(info);
+   if(!el||!await waitStable(el)||!state.active)return false;
+   const stableText=normalize(textOf(el)),id=info.id+'|'+stableText;
+   if(state.items.some(it=>it.key===id))return true;
+   // Serialise screenshot API calls. No global lock that drops another trigger.
+   const task=async()=>{
+     const elapsed=Date.now()-state.lastShot;
+     if(elapsed<560)await sleep(560-elapsed);
+     if(!state.active||!el.isConnected||!visible(el)||effectiveOpacity(el)<.97)return false;
+     let data;
+     try{data=await shot();}catch(e){state.errors.push(e.message);return false;}
+     state.lastShot=Date.now();
+     if(!el.isConnected||!visible(el))return false;
+     const image=await load(data),r=el.getBoundingClientRect();
+     const sx=image.naturalWidth/innerWidth,sy=image.naturalHeight/innerHeight;
+     const x=Math.max(0,Math.round(r.left*sx)),y=Math.max(0,Math.round(r.top*sy));
+     const w=Math.min(image.naturalWidth-x,Math.round(r.width*sx)),h=Math.min(image.naturalHeight-y,Math.round(r.height*sy));
+     if(w<24||h<24)return false;
+     const crop=document.createElement('canvas');crop.width=w;crop.height=h;
+     crop.getContext('2d').drawImage(image,x,y,w,h,0,0,w,h);
+     if(!state.items.some(it=>it.key===id))
+       state.items.push({key:id,label:info.label,anchor:info.anchor,image:crop.toDataURL('image/png'),width:w,height:h});
+     return true;
+   };
+   const queued=state.shotQueue.catch(()=>{}).then(task);
+   state.shotQueue=queued.catch(e=>{state.errors.push(String(e?.message||e));});
+   return queued;
  }
- function anchorFrom(target){
-  const el=target?.closest?.('button,a,[role="button"],[aria-haspopup],input,[tabindex]')||target;
-  if(!(el instanceof Element))return;
-  const r=el.getBoundingClientRect();
-  if(r.width>innerWidth*.75||r.height>innerHeight*.6)return;
-  state.anchor={rect:rect(r),label:normalize(textOf(el)||el.getAttribute('aria-label')||el.getAttribute('title')||el.tagName).slice(0,100)};
+ function sourceFrom(target){
+   if(!(target instanceof Element))return null;
+   let source=target.closest('button,a,[role="button"],[aria-haspopup],[aria-expanded],input,[tabindex]');
+   if(!source){
+     for(let el=target,n=0;el&&n<4;el=el.parentElement,n++){
+       const style=getComputedStyle(el);
+       if(style.cursor==='pointer'||el.hasAttribute('onclick')){source=el;break;}
+     }
+   }
+   source||=target;
+   const r=source.getBoundingClientRect();
+   if(r.width<4||r.height<4||r.width>innerWidth*.65||r.height>innerHeight*.6)return null;
+   const label=normalize(textOf(source)||source.getAttribute('aria-label')||source.getAttribute('title')||'interactive element').slice(0,100);
+   return {source,anchor:rect(r),label};
  }
- document.addEventListener('pointerdown',e=>{if(!state.active)return;anchorFrom(e.target);state.clickAnchorUntil=Date.now()+2300;schedule(e.target,340);},true);
- document.addEventListener('pointerover',e=>{if(!state.active)return;const t=e.target;if(t?.closest?.('button,a,[role="button"],[aria-haspopup],[title],[aria-label]')){if(Date.now()>(state.clickAnchorUntil||0))anchorFrom(t);schedule(t,550);}else if(state.anchor)schedule(t,380);},true);
- document.addEventListener('focusin',e=>{if(state.active){anchorFrom(e.target);schedule(e.target,350);}},true);
- function observer(){state.observing=new MutationObserver(()=>{if(state.active&&state.anchor&&Date.now()-state.lastCapture>550)schedule(state.pending?.target||document.activeElement,420);});state.observing.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style','aria-expanded','aria-hidden']});}
+ function observeTrigger(target,method){
+   if(!state.active)return;
+   const src=sourceFrom(target);if(!src)return;
+   if(popupElements().some(el=>el.contains(src.source)))return; // popup controls are not new source links
+   const a=src.anchor,id=[Math.round(a.x/6),Math.round(a.y/6),Math.round(a.width/6),Math.round(a.height/6),src.label].join(':');
+   const existing=state.events.get(id);
+   if(method==='hover'&&existing&&Date.now()-existing.clickedAt<1300)return;
+   const info={id,anchor:a,label:src.label,target:src.source,visibleBefore:new Set(popupElements()),clickedAt:method==='click'?Date.now():(existing?.clickedAt||0)};
+   state.events.set(id,info);
+   state.tracker?.note(info);
+ }
+ document.addEventListener('pointerdown',e=>{
+   if(!state.active)return;
+   observeTrigger(e.target,'click');
+   // The outgoing popup's capture may still be in flight; its own timer is not cancelled.
+ },true);
+ document.addEventListener('pointerover',e=>{
+   if(!state.active)return;
+   const target=e.target;
+   const interactive=target?.closest?.('button,a,[role="button"],[aria-haspopup],[aria-expanded],[title],[aria-label]');
+   if(!interactive||popupElements().some(el=>el.contains(interactive)))return;
+   observeTrigger(interactive,'hover');
+ },true);
+ document.addEventListener('focusin',e=>{if(state.active)observeTrigger(e.target,'focus');},true);
+ function observer(){
+   let last=0;
+   state.observing=new MutationObserver(()=>{
+     if(!state.active||!state.tracker)return;
+     const now=Date.now();if(now-last<140)return;last=now;
+     state.tracker.retryPending();
+   });
+   state.observing.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style','aria-expanded','aria-hidden']});
+ }
  async function start(){
-  state.active=false;clearTimeout(state.timer);state.observing?.disconnect();
-  state.items=[];state.anchor=null;state.pending=null;state.busy=false;
+  state.active=false;state.observing?.disconnect();state.tracker?.reset();
+  state.items=[];state.events.clear();state.errors=[];state.shotQueue=Promise.resolve();state.lastShot=0;
+  if(!window.SmartCaptureTracker)throw Error('Capture tracker missing. Reload extension.');
   await sleep(150);const image=await shot();const im=await load(image);
   state.base={image,width:im.naturalWidth,height:im.naturalHeight,viewportWidth:innerWidth,viewportHeight:innerHeight};
   // Text-level occupancy: never block whole white cards merely because they're containers.
@@ -134,6 +176,7 @@
     protectedRects.push({x,y,w:thickness,h},{x:x+w-thickness,y,w:thickness,h});
   }
   state.protectedRects=protectedRects;
+  state.tracker=window.SmartCaptureTracker.create({capture:captureTrigger,delay:170});
   state.active=true;observer();return {message:'Recording started. Interact with popups, then Stop & Save PNG.'};
  }
  async function exportPNG(){
@@ -173,9 +216,18 @@
   link.href=canvas.toDataURL('image/png');document.documentElement.append(link);link.click();link.remove();
   return {message:'Saved '+state.items.length+' popups safely ('+(result.unrouted||0)+' links marked by matching outlines instead of unsafe lines).'};
  }
- async function stop(){state.active=false;clearTimeout(state.timer);state.observing?.disconnect();while(state.busy)await sleep(50);return exportPNG();}
+ async function stop(){
+   if(!state.active)throw Error('No active capture.');
+   state.observing?.disconnect();
+   const results=await state.tracker.flush();
+   state.active=false;
+   const output=await exportPNG();
+   output.message+=' Captured '+results.captured+' of '+results.seen+' detected interactions.';
+   if(results.pending)output.message+=' '+results.pending+' did not produce a stable popup.';
+   return output;
+ }
  chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
-  const action=msg?.type==='STATUS'?Promise.resolve({active:state.active,count:state.items.length}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
+  const action=msg?.type==='STATUS'?Promise.resolve({active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
   action.then(sendResponse).catch(e=>sendResponse({error:e.message}));return true;
  });
 })();
