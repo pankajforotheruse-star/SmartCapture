@@ -1,5 +1,16 @@
 # SmartCapture
 
+## v0.10 — Hover popups and nearer context-aware placement (experimental)
+
+- Hover events on small price/discount/info icons are recorded even without an ARIA tooltip attribute or framework-specific CSS class.
+- Newly inserted floating panels are identified using DOM mutations, computed positioning and nearby source interactions; a bounded fallback scan also detects CSS-only hover panels with no DOM mutation.
+- Earlier clicks no longer take precedence over a more recent, causally related hover when both were near a newly revealed popup.
+- Plain links without hover-popup indicators remain excluded to avoid recreating the incorrect filename/menu association from v0.8.
+- Large popup captures may be rendered at **94%** of their captured size **only when that enables significantly closer collision-free placement**. Normal 100% rendering remains preferred; no text is cropped.
+- Tooltip detection is best-effort on very short hovers, unusual shadow DOM and cross-origin frames. Users should hold a tooltip open long enough for the browser screenshot to complete.
+- Regression tests now cover unmarked SVG icons, dynamically inserted floating divs, distinct pricing tooltips, and safe compact popup placement. Browser testing on the actual business application is still required.
+
+
 ## v0.9 — Correct popup-to-control association (experimental)
 
 - Each popup is attributed to **one** eligible trigger using recent interaction timing, DOM state changes, optional ARIA links and screen proximity; no page-specific coordinates or labels.
