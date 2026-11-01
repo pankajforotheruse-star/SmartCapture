@@ -1,5 +1,18 @@
 # SmartCapture
 
+## v0.12.2 candidate — Eliminate hover retry storms
+
+**Root cause found in v0.12.1:** Every unrelated page mutation retried every old pending hover trigger. In the reported sessions this resulted in 21 or 17 hover screenshots, but zero or one saved popup. Ordinary small text spans were also registered as speculative hover sources.
+
+- Capture now runs from the currently active pointer source; entering nested SVG elements does not create repeated interactions.
+- Mutation events can retry **only the active source**, with a maximum of two attempts per hover activation. Old triggers never launch a new screenshot when another page element updates.
+- DOM popup stability checks use shorter intervals to capture before the pointer leaves; visual screenshot-difference capture remains a strict fallback.
+- Only meaningful icons, tooltip attributes, and pointer/help elements are hover candidates; unrelated text spans are ignored.
+- Source/capture stages are reported in diagnostics (no candidate, stale hover, wrong owner, invalid crop), without recording private popup text in logs.
+- Automated test coverage includes three independent hover sources with 1.1-second dwell, exact DOM crop dimensions, correct source icons, repeated-hover deduplication, and no false popup on ordinary links.
+- **Validation:** 40 isolated tests and Chromium integration succeeded on the synthetic fixture. The private business application has not been tested, and this candidate must not be merged until accepted by the user.
+
+
 ## v0.12.0 candidate — Reliability refactor (draft, not on main)
 
 This is a development candidate for review and validation, **not a confirmed fix for private business applications**.
