@@ -103,11 +103,16 @@
      if(!state.active||!el.isConnected||!visible(el)||effectiveOpacity(el)<.97)return false;
      if(association.ownerFor(el,textOf(el),state.events.values())?.id!==info.id)return false;
      if(state.claims.has(popupSignature))return state.claims.get(popupSignature)===info.id;
+     const beforeRect=el.getBoundingClientRect(),beforeText=normalize(textOf(el));
      let data;
      try{data=await shot();}catch(e){state.errors.push(e.message);return false;}
      state.lastShot=Date.now();
-     if(!el.isConnected||!visible(el))return false;
-     const image=await load(data),r=el.getBoundingClientRect();
+     if(!el.isConnected||!visible(el)||effectiveOpacity(el)<.97)return false;
+     const r=el.getBoundingClientRect();
+     if(Math.abs(r.left-beforeRect.left)>3||Math.abs(r.top-beforeRect.top)>3||
+        Math.abs(r.width-beforeRect.width)>3||Math.abs(r.height-beforeRect.height)>3||
+        normalize(textOf(el))!==beforeText)return false; // don't save a closing/moving popup
+     const image=await load(data);
      const sx=image.naturalWidth/innerWidth,sy=image.naturalHeight/innerHeight;
      const x=Math.max(0,Math.round(r.left*sx)),y=Math.max(0,Math.round(r.top*sy));
      const w=Math.min(image.naturalWidth-x,Math.round(r.width*sx)),h=Math.min(image.naturalHeight-y,Math.round(r.height*sy));
