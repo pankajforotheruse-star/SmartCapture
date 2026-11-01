@@ -1,5 +1,16 @@
 # SmartCapture
 
+## v0.11 — Visual-difference hover capture and nearby placement (experimental)
+
+This release addresses hover panels that are visible in the browser but never collected by the DOM-based recorder. For hovered controls, SmartCapture now takes a tab screenshot **while the pointer is still over the control**, compares it with the untouched base screenshot, and locates a substantial newly visible region near that control. This works as a fallback for CSS-only, framework-specific and non-semantic popups. It rejects tiny hover highlights and distant visual changes. Standard DOM-based capture remains available if visual detection finds nothing.
+
+Popup placement uses the distance between the source and popup *edges*, not their centers. It tests the original size first, then 95%, 90% and (only for sufficiently large popups) 85% with increasing readability penalties. Shrinking is permitted only when it helps fit a nearby whitespace region without covering baseline content. No page-specific values, labels, coordinates or customer rules are used.
+
+**Browser limitation:** Chrome limits visible-tab screenshot frequency. Hover over each tooltip for about one second before moving to the next; extremely brief tooltips may still be missed. The Stop response now reports hover events, hover screenshots and visually saved hover popups to help diagnose remaining problems. Captured pages and screenshots remain local.
+
+Unit and synthetic image tests are not proof of correct behavior on your proprietary business website. Testing that website still requires a capture from a browser with access.
+
+
 ## v0.10 — Hover popups and nearer context-aware placement (experimental)
 
 - Hover events on small price/discount/info icons are recorded even without an ARIA tooltip attribute or framework-specific CSS class.
