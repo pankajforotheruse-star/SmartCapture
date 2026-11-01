@@ -63,7 +63,7 @@
     ctx.drawImage(base,0,0);const first=ctx.getImageData(0,0,w,h).data;
     ctx.clearRect(0,0,w,h);ctx.drawImage(after,0,0);
     const second=ctx.getImageData(0,0,w,h).data;
-    const sx=w/viewport.width,sy=h/viewport.height;
+    const sx=w/viewport.width,sy=sx; // uniform scale, screenshot height may be clipped
     return detect(first,second,w,h,{
       x:anchor.x*sx,y:anchor.y*sy,width:anchor.width*sx,height:anchor.height*sy
     });

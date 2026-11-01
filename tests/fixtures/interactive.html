@@ -1,0 +1,30 @@
+<!doctype html><html><head><meta charset="utf-8"><title>SmartCapture Fixture</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f6f4fa;font:13px Arial;color:#233247}
+header{background:#00879b;color:white;height:54px;padding:16px}nav{height:35px;padding:10px}
+main{margin:12px 50px 0 100px}.card{background:white;border-radius:9px;height:198px;padding:28px;position:relative;box-shadow:0 2px 5px #ddd}
+.card.secondary{height:80px;margin-top:20px}.association{position:absolute;top:65px;left:55px}.price{position:absolute;top:35px;left:470px}.balance{position:absolute;top:35px;left:650px}
+.price2{position:absolute;top:27px;right:145px}.icon{cursor:help;border-radius:100%;width:17px;height:17px;vertical-align:middle;display:inline-block;border:1px solid #8193aa;padding:2px}
+.icon svg{width:11px;height:11px;pointer-events:auto}.popup{display:none;position:absolute;background:#fff;border-radius:7px;border:1px solid #d7dfec;
+box-shadow:0 3px 14px #0002;padding:12px;width:245px;z-index:15;color:#303c4c;font-size:12px;line-height:1.6}
+.popup strong{font-weight:bold}.popup p{margin:3px 0}.association .popup{left:135px;top:-10px;width:270px}
+.price .popup{left:95px;top:33px;width:225px}.price2 .popup{right:-4px;bottom:25px;width:260px}
+[data-trigger]:hover>.popup{display:block}.summary{padding:15px 0}.filename{position:absolute;right:24px;top:18px}
+.association .popup{background:transparent;border:0;box-shadow:none;padding:6px}
+.association .panel-body{background:white;border:1px solid #d7dfec;box-shadow:0 3px 14px #0002;padding:12px;border-radius:7px}
+</style></head><body>
+<header>SmartCapture independent fixture</header><nav>Business / Products / Summary</nav>
+<main><div class="card"><h3>Service product</h3>
+<div class="association" data-trigger id="association" style="width:120px">Association
+<span class="icon" id="assoc-icon" aria-label="Association details"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="#009cc2"/></svg></span>
+<div class="popup" id="association-popup" role="tooltip"><div class="panel-body" id="association-panel"><strong>Association Customer Details</strong><p>Customer Number 00000000000</p><p>Customer Name Test Business</p><p>Termination 01.01.2030</p></div></div></div>
+<div class="price">Monthly <strong>DKK 319.00</strong>
+<span data-trigger id="discount-trigger"><span class="icon" id="discount-icon" aria-label="Discount breakdown"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="#009cc2"/></svg></span>
+<div class="popup" id="discount-popup" role="tooltip"><strong>Total Discount 9%</strong><p>Discount DKK 30.00</p><p>Initial Price DKK 349.00</p></div></span></div>
+<div class="balance">BA Balance <strong>DKK 0.00</strong></div>
+<a class="filename" href="#" id="ordinary-link">Filename without hover panel</a></div>
+<div class="card secondary"><div class="summary">Basic plan</div>
+<div class="price2"><strong>DKK 319.00</strong>
+<span data-trigger id="current-trigger"><span class="icon" id="current-icon" aria-label="Current price details"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="#009cc2"/></svg></span>
+<div class="popup" id="current-popup" role="tooltip"><strong>Current</strong><p>Discount 30 kr — DKK 30.00</p><p>Show Pricing Details</p></div></span></div></div>
+</main></body></html>

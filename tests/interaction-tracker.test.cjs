@@ -56,3 +56,53 @@ test('independent sources remain separate even when labels match',async()=>{
  await session.flush();
  assert.deepEqual(recorded,[155,377]);
 });
+
+test('mutations retry only the named active source, not old hovers',async()=>{
+ const attempted=[];
+ const session=tracker(async info=>{attempted.push(info.id);return false;});
+ for(const id of ['unrelated-a','real-price-icon','unrelated-b'])session.note({id});
+ await session.flush();
+ session.retryPending('real-price-icon');
+ await session.flush();
+ assert.deepEqual(attempted,['unrelated-a','real-price-icon','unrelated-b','real-price-icon']);
+ session.retryPending('real-price-icon');
+ await session.flush();
+ assert.equal(attempted.length,4,'only two attempts allowed per hover activation');
+});
+test('mutation with no active source must not schedule screenshots',async()=>{
+ const calls=[];
+ const session=tracker(async info=>{calls.push(info.id);return false;});
+ session.note({id:'old-hover'});
+ await session.flush();
+ session.retryPending();
+ await session.flush();
+ assert.deepEqual(calls,['old-hover']);
+});
+
+test('stale hover is discarded when Stop occurs after pointer has left',async()=>{
+ const context={window:{}};vm.runInNewContext(source,context);
+ const timers=new Map();let id=0,active='first',shots=[];
+ const t=context.window.SmartCaptureTracker.create({
+  capture:async info=>{shots.push(info.id);return true;},
+  canAttempt:info=>info.id===active,
+  setTimer:fn=>{timers.set(++id,fn);return id;},
+  clearTimer:key=>timers.delete(key)
+ });
+ t.note({id:'first'});active='second';t.note({id:'second'});
+ const result=await t.flush();
+ assert.deepEqual(shots,['second']);
+ assert.equal(result.captured,1);
+});
+test('re-entering same source can start fresh capture after failed hover',async()=>{
+ const context={window:{}};vm.runInNewContext(source,context);
+ let next=0;const timers=new Map(),seen=[];
+ const t=context.window.SmartCaptureTracker.create({
+  capture:async info=>{seen.push(info.timestamp);return info.timestamp===2;},
+  setTimer:fn=>{timers.set(++next,fn);return next;},
+  clearTimer:key=>timers.delete(key)
+ });
+ t.note({id:'icon',timestamp:1});await t.flush();
+ t.note({id:'icon',timestamp:2});await t.flush();
+ assert.deepEqual(seen,[1,2]);
+ assert.equal(t.stats().captured,1);
+});

@@ -1,5 +1,56 @@
 # SmartCapture
 
+## v0.12.3 candidate — Repeatability verification
+
+Two user recordings of v0.12.2 differed: one captured all three tooltips, the other missed Association. A new multi-session Chromium regression **reproduced a missing popup** after a recording restart. The cause was stale baseline visibility: a tooltip still visible when a session started remained marked as "already visible" even after being closed and reopened. The recorder now refreshes its comparison baseline after the pointer leaves popup triggers, including when it began recording with a tooltip already open.
+
+Additional changes:
+- Only the current trigger can own the new popup; historic hover events cannot compete for ownership.
+- Pending screenshots for controls that are no longer hovered are discarded at Stop.
+- Nested SVG/pointerover events on the same source are collapsed into one hover entry.
+- Each recording starts with a fresh tracker and capture state.
+- Integration regression runs **three consecutive full capture sessions**, changes the tooltip order, and verifies three captures each time, no duplicates and no false link-associated popups.
+- The clean-crop, no-background-contamination and nearby-placement safeguards remain unchanged.
+
+**Latest validation:** 42 isolated tests and the multi-session Chromium integration test passed in GitHub Actions. The private business page is still unverified; do not merge this draft until real-user capture results are reviewed.
+
+
+## v0.12.2 candidate — Eliminate hover retry storms
+
+**Root cause found in v0.12.1:** Every unrelated page mutation retried every old pending hover trigger. In the reported sessions this resulted in 21 or 17 hover screenshots, but zero or one saved popup. Ordinary small text spans were also registered as speculative hover sources.
+
+- Capture now runs from the currently active pointer source; entering nested SVG elements does not create repeated interactions.
+- Mutation events can retry **only the active source**, with a maximum of two attempts per hover activation. Old triggers never launch a new screenshot when another page element updates.
+- DOM popup stability checks use shorter intervals to capture before the pointer leaves; visual screenshot-difference capture remains a strict fallback.
+- Only meaningful icons, tooltip attributes, and pointer/help elements are hover candidates; unrelated text spans are ignored.
+- Source/capture stages are reported in diagnostics (no candidate, stale hover, wrong owner, invalid crop), without recording private popup text in logs.
+- Automated test coverage includes three independent hover sources with 1.1-second dwell, exact DOM crop dimensions, correct source icons, repeated-hover deduplication, and no false popup on ordinary links.
+- **Validation:** 40 isolated tests and Chromium integration succeeded on the synthetic fixture. The private business application has not been tested, and this candidate must not be merged until accepted by the user.
+
+
+## v0.12.0 candidate — Reliability refactor (draft, not on main)
+
+This is a development candidate for review and validation, **not a confirmed fix for private business applications**.
+
+### Capture contract
+
+1. An interaction is anchored to the smallest appropriate source control (e.g. the 17px info icon, not the surrounding price).
+2. A popup's crop rectangle **must come from a visible, opaque DOM surface**. Screenshot pixel differences may locate that surface but must never define the saved crop.
+3. If the tool cannot identify a clean popup boundary, it intentionally skips capture instead of compositing background data inside it.
+4. A stable source element identity and normalized popup content prevent repeat hovers from making duplicate popups.
+5. Placement searches existing whitespace relative to the source, prefers source-to-popup edge proximity, and may use 97%, 94% or 90% size when required. The text size must remain at least 10 CSS pixels after scaling.
+6. Connectors follow the source control. No popup may cover content on the base screenshot.
+
+### Testing
+
+- Isolated Node layout, popup boundary, hover identity and dedup tests.
+- A synthetic **real Chromium browser extension test** simulating Association, Discount and Current hover popups, repeated hover and a filename link that opens nothing.
+- The browser test additionally asserts that exported crop sizes correspond to real popup DOM bounds and that anchors are icon-sized.
+- Run automatically in GitHub Actions on the draft pull request. Test and review the private business application separately before merging.
+
+**Known trade-off:** Styled surfaces that are genuinely transparent, and popup content in inaccessible cross-origin frames, may not be captured. A missing capture is preferred over a misleading/contaminated image. Hover states shorter than Chrome's tab-screenshot rate limit may also be missed.
+
+
 ## v0.11 — Visual-difference hover capture and nearby placement (experimental)
 
 This release addresses hover panels that are visible in the browser but never collected by the DOM-based recorder. For hovered controls, SmartCapture now takes a tab screenshot **while the pointer is still over the control**, compares it with the untouched base screenshot, and locates a substantial newly visible region near that control. This works as a fallback for CSS-only, framework-specific and non-semantic popups. It rejects tiny hover highlights and distant visual changes. Standard DOM-based capture remains available if visual detection finds nothing.
