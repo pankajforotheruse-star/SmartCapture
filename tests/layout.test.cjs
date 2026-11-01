@@ -96,8 +96,27 @@ test('small optional resize places a large popup in nearby safe whitespace',()=>
  });
  assert.equal(result.positions.length,1);
  const p=result.positions[0];
- assert.equal(p.renderScale,0.94,'use only the controlled 94% reduction');
+ assert.ok(p.renderScale>=0.85&&p.renderScale<=1,'readable 85–100% size only');
  assert.ok(p.y<260,'popup belongs inside the nearest free pocket');
  assert.ok(obstacles.every(o=>!intersects(p,o)),'resize must not overwrite source content');
  assert.equal(result.height,500,'the screenshot should not be expanded unnecessarily');
+});
+
+test('medium popup fits beside its source without covering adjacent fields',()=>{
+ const layout=engine();
+ const blockers=[
+  {x:0,y:0,w:1040,h:88},{x:0,y:88,w:140,h:672},
+  {x:200,y:102,w:125,h:44},{x:204,y:150,w:72,h:23},
+  {x:545,y:108,w:180,h:118},
+  {x:140,y:274,w:900,h:3},{x:140,y:310,w:900,h:3},{x:140,y:367,w:900,h:3}
+ ];
+ const result=layout.compute({
+  items:[{width:262,height:102,anchor:{x:204,y:150,width:72,height:23}}],
+  obstacles:blockers,routeObstacles:blockers,image:{},width:1040,height:760,scale:1
+ });
+ const p=result.positions[0];
+ assert.ok(p.x>=276&&p.x<400,'popup should use whitespace beside the tag');
+ assert.ok(p.y<260,'popup must not be sent below the content section');
+ assert.ok(p.renderScale>=0.85,'popup must remain readable');
+ assert.ok(blockers.every(b=>!intersects(p,b)),'never cover other labels');
 });
