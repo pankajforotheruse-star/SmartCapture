@@ -34,3 +34,29 @@ test('rejects translucent popup background that would bleed page text into scree
  assert.equal(engine.opaqueColor('transparent'),false);
  assert.equal(engine.opaqueColor('rgb(255, 255, 255)'),true);
 });
+
+test('transparent tooltip wrapper resolves to the complete opaque inner panel',()=>{
+ const r={x:710,y:165,width:240,height:120};
+ const white={x:716,y:170,width:230,height:110};
+ const text='Total Discount 9% DKK 30.00 Initial Price DKK 349.00';
+ const panel={innerText:text,textContent:text,isConnected:true,parentElement:null,
+  getBoundingClientRect:()=>({...white,left:white.x,top:white.y}),
+  querySelectorAll:()=>[]};
+ const wrapper={innerText:text,textContent:text,parentElement:null,
+  getBoundingClientRect:()=>({...r,left:r.x,top:r.y}),querySelectorAll:()=>[panel]};
+ const props=n=>n===wrapper
+  ?{backgroundColor:'rgba(0, 0, 0, 0)',opacity:'1',display:'block',visibility:'visible'}
+  :{backgroundColor:'rgb(255, 255, 255)',opacity:'1',display:'block',visibility:'visible'};
+ const chosen=engine.resolveOpaque(wrapper,props,view);
+ assert.equal(chosen.element,panel);
+ assert.equal(chosen.rect.width,230);
+});
+test('transparent tooltip with no complete opaque panel is rejected instead of cropping background',()=>{
+ const r={x:710,y:165,width:240,height:120};
+ const wrapper={innerText:'Total Discount 9% DKK 30.00 Initial Price DKK 349.00',
+  getBoundingClientRect:()=>({...r,left:r.x,top:r.y}),querySelectorAll:()=>[]};
+ const result=engine.resolveOpaque(wrapper,()=>({backgroundColor:'transparent',opacity:'1',
+  display:'block',visibility:'visible'}),view);
+ assert.equal(result.element,null);
+ assert.equal(result.reason,'no-opaque-complete-surface');
+});
