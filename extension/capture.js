@@ -2,7 +2,7 @@
 (() => {
  if(window.__smartCaptureV12)return;
  window.__smartCaptureV12=true;
- const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),lastFloatingScan:0,errors:[],sourceIds:new WeakMap(),nextSourceId:0,debug:{hoverEvents:0,hoverShots:0,hoverSaved:0}};
+ const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),lastFloatingScan:0,errors:[],sourceIds:new WeakMap(),nextSourceId:0,debug:{hoverEvents:0,hoverShots:0,hoverSaved:0,rejections:{'not-stable':0,clipped:0}}};
  const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
  const sleep=t=>new Promise(r=>setTimeout(r,t));
  const visible=el=>{if(!(el instanceof Element))return false;const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>75&&r.height>35&&r.width<innerWidth*.85&&r.height<innerHeight*.94&&r.top>=-2&&r.left>=-2&&r.bottom<=innerHeight+2&&r.right<=innerWidth+2&&s.visibility!=='hidden'&&s.display!=='none'&&+s.opacity!==0;};
@@ -99,18 +99,31 @@
  function cropPopup(image,element,info,kind){
    const surface=window.SmartCaptureSurface;
    if(!surface||!element?.isConnected||!visible(element))return false;
-   const bounds=element.getBoundingClientRect(),css=getComputedStyle(element);
-   // Reject transparent/unbounded containers: their screenshot crops leak page text.
-   if(!surface.opaqueColor(css.backgroundColor)||effectiveOpacity(element)<.98)return false;
+   // Accept transparent portal wrappers ONLY if they contain a complete,
+   // independently opaque popup panel. Never crop the transparent wrapper.
+   const resolved=surface.resolveOpaque(element,getComputedStyle,{width:innerWidth,height:innerHeight});
+   if(!resolved.element){
+     state.debug.rejections[resolved.reason]=(state.debug.rejections[resolved.reason]||0)+1;
+     return false;
+   }
+   const panel=resolved.element;
+   if(!panel.isConnected||effectiveOpacity(panel)<.98){
+     state.debug.rejections['not-stable']++;
+     return false;
+   }
+   const bounds=panel.getBoundingClientRect();
    const scale=window.SmartCaptureGeometry.scaleFor(image.naturalWidth,innerWidth);
    const imageBox=window.SmartCaptureGeometry.rectInImage(bounds,scale,image.naturalWidth,image.naturalHeight);
-   if(!imageBox||imageBox.width<55||imageBox.height<22)return false;
+   if(!imageBox||imageBox.width<55||imageBox.height<22){
+     state.debug.rejections['clipped']++;
+     return false;
+   }
    const {x,y,width:w,height:h}=imageBox;
-   const content=normalize(textOf(element));
+   const content=normalize(textOf(panel));
    if(content.length<5)return false;
    const key='source:'+info.id+'|content:'+content;
    if(state.items.some(item=>item.key===key))return true;
-   const identity=surface.popupSignature?.(element,content)||window.SmartCaptureAssociation.signature(element,content);
+   const identity=window.SmartCaptureAssociation.signature(panel,content);
    const claimed=state.claims.get(identity);
    if(claimed&&claimed!==info.id)return false;
    const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;
@@ -119,7 +132,7 @@
    state.items.push({
      key,kind,sourceId:info.id,label:info.label,anchor:info.anchor,
      image:canvas.toDataURL('image/png'),width:w,height:h,
-     minFontPx:minReadableFont(element)
+     minFontPx:minReadableFont(panel)
    });
    return true;
  }
@@ -244,7 +257,7 @@
  async function start(){
   state.active=false;state.observing?.disconnect();state.tracker?.reset();
   state.layoutDiagnostics=null;state.items=[];state.events.clear();state.claims.clear();state.dynamicPopups.clear();state.errors=[];state.sourceIds=new WeakMap();state.nextSourceId=0;
-  state.debug={hoverEvents:0,hoverShots:0,hoverSaved:0};state.shotQueue=Promise.resolve();state.lastShot=0;
+  state.debug={hoverEvents:0,hoverShots:0,hoverSaved:0,rejections:{'not-stable':0,clipped:0}};state.shotQueue=Promise.resolve();state.lastShot=0;
   if(!window.SmartCaptureTracker||!window.SmartCaptureAssociation||!window.SmartCaptureHover||!window.SmartCaptureVisualDiff||!window.SmartCaptureSurface||!window.SmartCaptureGeometry)throw Error('Capture modules missing. Reload extension.');
   await sleep(150);const image=await shot();const im=await load(image);
   state.base={image,width:im.naturalWidth,height:im.naturalHeight,viewportWidth:innerWidth,viewportHeight:innerHeight};
@@ -342,11 +355,14 @@
    output.message+=' Captured '+results.captured+' of '+results.seen+' detected interactions.';
    if(results.pending)output.message+=' '+results.pending+' did not produce a stable popup.';
    output.message+=' Hover diagnostics: '+state.debug.hoverEvents+' events, '+state.debug.hoverShots+' screenshots, '+state.debug.hoverSaved+' visually saved.';
+   const rejected=Object.entries(state.debug.rejections).filter(([,count])=>count>0);
+   if(rejected.length)output.message+=' Skipped: '+rejected.map(([reason,count])=>reason+' '+count).join(', ')+'.';
+   if(!state.items.length)output.message+=' No valid popup was recorded. Please report the hover diagnostics.';
    if(state.errors.length)output.message+=' '+state.errors.length+' screenshot/capture error(s).';
    return output;
  }
  chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
-  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.12.0',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0,hoverShots:state.debug.hoverShots,hoverSaved:state.debug.hoverSaved}):msg?.type==='METRICS'?Promise.resolve({items:state.items.map(i=>({kind:i.kind,width:i.width,height:i.height,anchor:i.anchor,minFontPx:i.minFontPx})),layout:state.layoutDiagnostics||null}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
+  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.12.0',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0,hoverShots:state.debug.hoverShots,hoverSaved:state.debug.hoverSaved,rejections:state.debug.rejections}):msg?.type==='METRICS'?Promise.resolve({items:state.items.map(i=>({kind:i.kind,width:i.width,height:i.height,anchor:i.anchor,minFontPx:i.minFontPx})),layout:state.layoutDiagnostics||null}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
   action.then(sendResponse).catch(e=>sendResponse({error:e.message}));return true;
  });
 })();
