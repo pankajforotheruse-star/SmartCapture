@@ -1,8 +1,8 @@
 'use strict';
 (() => {
- if(window.__smartCaptureV121)return;
- window.__smartCaptureV121=true;
- const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),lastFloatingScan:0,errors:[],sourceIds:new WeakMap(),nextSourceId:0,debug:{hoverEvents:0,hoverShots:0,hoverSaved:0,rejections:{'not-stable':0,clipped:0}}};
+ if(window.__smartCaptureV122)return;
+ window.__smartCaptureV122=true;
+ const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),lastFloatingScan:0,activeHoverId:null,errors:[],sourceIds:new WeakMap(),nextSourceId:0,debug:{hoverEvents:0,hoverShots:0,hoverSaved:0,rejections:{'not-stable':0,clipped:0},stages:{noCandidate:0,staleHover:0,wrongOwner:0,invalidCrop:0}}};
  const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
  const sleep=t=>new Promise(r=>setTimeout(r,t));
  const visible=el=>{if(!(el instanceof Element))return false;const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>75&&r.height>35&&r.width<innerWidth*.85&&r.height<innerHeight*.94&&r.top>=-2&&r.left>=-2&&r.bottom<=innerHeight+2&&r.right<=innerWidth+2&&s.visibility!=='hidden'&&s.display!=='none'&&+s.opacity!==0;};
@@ -73,16 +73,15 @@
    return best>-420?winner:null;
  }
  async function waitStable(el){
-   let previous='',matches=0;
-   for(let attempt=0;attempt<9;attempt++){
+   // Typical CSS fades finish within ~150ms. Avoid the previous 850ms wait
+   // that let a user move away before the screenshot was finally taken.
+   let previous='';
+   for(let attempt=0;attempt<6;attempt++){
      if(!el.isConnected||!visible(el))return false;
      const r=el.getBoundingClientRect();
      const signature=[Math.round(r.x),Math.round(r.y),Math.round(r.width),Math.round(r.height),normalize(textOf(el))].join('|');
-     const animating=el.getAnimations?.({subtree:false}).some(anim=>anim.playState==='running');
-     if(effectiveOpacity(el)>.97&&!animating&&previous===signature)matches++;
-     else matches=0;
-     if(matches>=1)return true;
-     previous=signature;await sleep(95);
+     if(effectiveOpacity(el)>.97&&previous===signature)return true;
+     previous=signature;await sleep(48);
    }
    return false;
  }
@@ -139,12 +138,17 @@
  async function visualCapture(info){
    if(!state.active||!state.baseDecoded||!window.SmartCaptureVisualDiff||
       !window.SmartCaptureSurface)return false;
+   if(info.method==='hover'&&(!info.target.matches(':hover')||state.activeHoverId!==info.id)){
+     state.debug.stages.staleHover++;return false;
+   }
    // Never capture the guessed image-difference rectangle itself.
    // Only a visually matched, opaque DOM surface may be used as a screenshot crop.
    const job=async()=>{
      const elapsed=Date.now()-state.lastShot;
      if(elapsed<530)await sleep(530-elapsed);
-     if(!state.active)return false;
+     if(!state.active||state.activeHoverId!==info.id||!info.target.matches(':hover')){
+       state.debug.stages.staleHover++;return false;
+     }
      let data;
      try{data=await shot();}catch(e){state.errors.push('hover screenshot: '+e.message);return false;}
      state.lastShot=Date.now();state.debug.hoverShots++;
@@ -157,9 +161,12 @@
        width:changed.width/scale,height:changed.height/scale};
      const match=window.SmartCaptureSurface.identifyOnPage(
        region,info.anchor,{width:innerWidth,height:innerHeight},document,getComputedStyle);
-     if(!match)return false; // no clean DOM boundary; omit rather than bleed background
-     if(window.SmartCaptureAssociation.ownerFor(match.element,textOf(match.element),state.events.values())?.id!==info.id)return false;
+     if(!match){state.debug.stages.noCandidate++;return false;}
+     if(window.SmartCaptureAssociation.ownerFor(match.element,textOf(match.element),state.events.values())?.id!==info.id){
+       state.debug.stages.wrongOwner++;return false;
+     }
      const saved=cropPopup(image,match.element,info,'hover');
+     if(!saved)state.debug.stages.invalidCrop++;
      if(saved)state.debug.hoverSaved++;
      return saved;
    };
@@ -179,6 +186,9 @@
        const elapsed=Date.now()-state.lastShot;
        if(elapsed<530)await sleep(530-elapsed);
        if(!state.active||!el.isConnected||!visible(el)||effectiveOpacity(el)<.98)return false;
+       if(info.method==='hover'&&(state.activeHoverId!==info.id||!info.target.matches(':hover'))){
+         state.debug.stages.staleHover++;return false;
+       }
        let data;
        try{data=await shot();}catch(e){state.errors.push('DOM capture: '+e.message);return false;}
        state.lastShot=Date.now();
@@ -189,7 +199,7 @@
      const queued=state.shotQueue.catch(()=>{}).then(job);
      state.shotQueue=queued.catch(e=>state.errors.push('DOM job: '+String(e?.message||e)));
      if(await queued)return true;
-   }
+   } else if(!el)state.debug.stages.noCandidate++;
    return info.method==='hover'?visualCapture(info):false;
  }
  function sourceFrom(target,method){
@@ -217,9 +227,10 @@
    if(!state.sourceIds.has(src.source))state.sourceIds.set(src.source,++state.nextSourceId);
    const id=String(state.sourceIds.get(src.source));
    const existing=state.events.get(id);
-   if(existing&&method!=='click'&&Date.now()-existing.timestamp<750)return; // dedupe nested hover events but permit retry on rehover
+   if(existing&&method!=='click'&&Date.now()-existing.timestamp<400&&
+      state.activeHoverId===id)return; // nested SVG mouseovers belong to same enter
    if(existing&&Date.now()-existing.clickedAt<800)return;
-   if(method==='hover')state.debug.hoverEvents++;
+   if(method==='hover'){state.debug.hoverEvents++;state.activeHoverId=id;}
    const visibleBefore=method==='hover' ? new Map(state.baselineVisible||[]) : new Map(popupElements().map(el=>[el,normalize(textOf(el))]));
    const info={id,anchor:a,label:src.label,target:src.source,method,timestamp:Date.now(),
      visibleBefore,clickedAt:method==='click'?Date.now():(existing?.clickedAt||0)};
@@ -233,10 +244,18 @@
  },true);
  document.addEventListener('pointerover',e=>{
    if(!state.active)return;
-   const target=e.target;
-   const icon=window.SmartCaptureHover?.hoverSource(target,getComputedStyle,{width:innerWidth,height:innerHeight});
+   const icon=window.SmartCaptureHover?.hoverSource(e.target,getComputedStyle,{width:innerWidth,height:innerHeight});
    if(!icon||popupElements().some(el=>el.contains(icon)))return;
+   // Moving between SVG children is not a new interaction.
+   if(e.relatedTarget instanceof Node&&icon.contains(e.relatedTarget))return;
    observeTrigger(icon,'hover');
+ },true);
+ document.addEventListener('pointerout',e=>{
+   if(!state.active||!state.activeHoverId)return;
+   const info=state.events.get(state.activeHoverId);
+   if(!info?.target||!(info.target===e.target||info.target.contains(e.target)))return;
+   if(e.relatedTarget instanceof Node&&info.target.contains(e.relatedTarget))return;
+   state.activeHoverId=null;
  },true);
  document.addEventListener('focusin',e=>{if(state.active)observeTrigger(e.target,'focus');},true);
  function observer(){
@@ -252,15 +271,18 @@
          if(floating)state.dynamicPopups.add(floating);
        }
      }
-     const now=Date.now();if(now-last<70)return;last=now;
-     state.tracker.retryPending();
+     const now=Date.now();if(now-last<100)return;last=now;
+     // Only retry the control that is CURRENTLY hovered. Do not relaunch
+     // screenshots for every old mouseover whenever the page mutates.
+     const id=state.activeHoverId,info=state.events.get(id);
+     if(id&&info?.target?.matches(':hover'))state.tracker.retryPending(id);
    });
    state.observing.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style','aria-expanded','aria-hidden']});
  }
  async function start(){
   state.active=false;state.observing?.disconnect();state.tracker?.reset();
-  state.layoutDiagnostics=null;state.items=[];state.events.clear();state.claims.clear();state.dynamicPopups.clear();state.errors=[];state.sourceIds=new WeakMap();state.nextSourceId=0;
-  state.debug={hoverEvents:0,hoverShots:0,hoverSaved:0,rejections:{'not-stable':0,clipped:0}};state.shotQueue=Promise.resolve();state.lastShot=0;
+  state.layoutDiagnostics=null;state.items=[];state.events.clear();state.claims.clear();state.dynamicPopups.clear();state.errors=[];state.sourceIds=new WeakMap();state.nextSourceId=0;state.activeHoverId=null;
+  state.debug={hoverEvents:0,hoverShots:0,hoverSaved:0,rejections:{'not-stable':0,clipped:0},stages:{noCandidate:0,staleHover:0,wrongOwner:0,invalidCrop:0}};state.shotQueue=Promise.resolve();state.lastShot=0;
   if(!window.SmartCaptureTracker||!window.SmartCaptureAssociation||!window.SmartCaptureHover||!window.SmartCaptureVisualDiff||!window.SmartCaptureSurface||!window.SmartCaptureGeometry)throw Error('Capture modules missing. Reload extension.');
   await sleep(150);const image=await shot();const im=await load(image);
   state.base={image,width:im.naturalWidth,height:im.naturalHeight,viewportWidth:innerWidth,viewportHeight:innerHeight};
@@ -306,7 +328,7 @@
     protectedRects.push({x,y,w:thickness,h},{x:x+w-thickness,y,w:thickness,h});
   }
   state.protectedRects=protectedRects;
-  state.tracker=window.SmartCaptureTracker.create({capture:captureTrigger,delay:175});
+  state.tracker=window.SmartCaptureTracker.create({capture:captureTrigger,delay:125});
   state.active=true;observer();return {message:'Recording started. Interact with popups, then Stop & Save PNG.'};
  }
  async function exportPNG(){
@@ -362,7 +384,8 @@
        ' interactions; '+state.debug.hoverEvents+' hover events, '+
        state.debug.hoverShots+' hover screenshots. '+
        (rejects.length?'Rejected surfaces: '+rejects.map(([reason,n])=>reason+' '+n).join(', ')+'. ':'')+
-       (state.errors.length?'Screenshot errors: '+state.errors.length+'.':'')};
+       (state.errors.length?'Screenshot errors: '+state.errors.length+'. ':'')+
+       'Stages: '+JSON.stringify(state.debug.stages)+'.'};
    }
    const output=await exportPNG();
    output.message+=' Captured '+results.captured+' of '+results.seen+' detected interactions.';
@@ -372,10 +395,11 @@
    if(rejected.length)output.message+=' Skipped: '+rejected.map(([reason,count])=>reason+' '+count).join(', ')+'.';
    if(!state.items.length)output.message+=' No valid popup was recorded. Please report the hover diagnostics.';
    if(state.errors.length)output.message+=' '+state.errors.length+' screenshot/capture error(s).';
+   output.message+=' Stages: '+JSON.stringify(state.debug.stages)+'.';
    return output;
  }
  chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
-  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.12.1',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0,hoverShots:state.debug.hoverShots,hoverSaved:state.debug.hoverSaved,rejections:state.debug.rejections}):msg?.type==='METRICS'?Promise.resolve({items:state.items.map(i=>({kind:i.kind,width:i.width,height:i.height,anchor:i.anchor,minFontPx:i.minFontPx})),layout:state.layoutDiagnostics||null}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
+  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.12.2',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0,hoverShots:state.debug.hoverShots,hoverSaved:state.debug.hoverSaved,rejections:state.debug.rejections}):msg?.type==='METRICS'?Promise.resolve({items:state.items.map(i=>({kind:i.kind,width:i.width,height:i.height,anchor:i.anchor,minFontPx:i.minFontPx})),layout:state.layoutDiagnostics||null}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
   action.then(sendResponse).catch(e=>sendResponse({error:e.message}));return true;
  });
 })();
