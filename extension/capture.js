@@ -2,7 +2,7 @@
 (() => {
  if(window.__smartCaptureV123)return;
  window.__smartCaptureV123=true;
- const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),lastFloatingScan:0,activeHoverId:null,errors:[],sourceIds:new WeakMap(),nextSourceId:0,debug:{hoverEvents:0,hoverShots:0,hoverSaved:0,rejections:{'not-stable':0,clipped:0},stages:{noCandidate:0,staleHover:0,wrongOwner:0,invalidCrop:0}}};
+ const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),lastFloatingScan:0,activeHoverId:null,baselineTimer:null,errors:[],sourceIds:new WeakMap(),nextSourceId:0,debug:{hoverEvents:0,hoverShots:0,hoverSaved:0,rejections:{'not-stable':0,clipped:0},stages:{noCandidate:0,staleHover:0,wrongOwner:0,invalidCrop:0}}};
  const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
  const sleep=t=>new Promise(r=>setTimeout(r,t));
  const visible=el=>{if(!(el instanceof Element))return false;const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>75&&r.height>35&&r.width<innerWidth*.85&&r.height<innerHeight*.94&&r.top>=-2&&r.left>=-2&&r.bottom<=innerHeight+2&&r.right<=innerWidth+2&&s.visibility!=='hidden'&&s.display!=='none'&&+s.opacity!==0;};
@@ -225,6 +225,16 @@
    const label=normalize(textOf(source)||source.getAttribute('aria-label')||source.getAttribute('title')||'interactive element').slice(0,100);
    return {source,anchor:rect(r),label};
  }
+ function refreshIdleBaseline(){
+   if(state.baselineTimer!==null)clearTimeout(state.baselineTimer);
+   state.baselineTimer=setTimeout(()=>{
+     state.baselineTimer=null;
+     if(!state.active||state.activeHoverId!==null)return;
+     // When a tooltip closes on pointer leave, it must no longer count as
+     // already visible for the NEXT hover. CSS :hover changes may not mutate DOM.
+     state.baselineVisible=new Map(popupElements().map(el=>[el,normalize(textOf(el))]));
+   },45);
+ }
  function observeTrigger(target,method){
    if(!state.active)return;
    const src=sourceFrom(target,method);if(!src)return;
@@ -238,7 +248,10 @@
    if(existing&&method==='hover'&&state.activeHoverId===id&&src.source.matches(':hover'))return;
    if(existing&&method==='focus'&&state.activeHoverId===id)return;
    if(existing&&Date.now()-existing.clickedAt<800)return;
-   if(method==='hover'){state.debug.hoverEvents++;state.activeHoverId=id;}
+   if(method==='hover'){
+     if(state.baselineTimer!==null){clearTimeout(state.baselineTimer);state.baselineTimer=null;}
+     state.debug.hoverEvents++;state.activeHoverId=id;
+   }
    const visibleBefore=method==='hover' ? new Map(state.baselineVisible||[]) : new Map(popupElements().map(el=>[el,normalize(textOf(el))]));
    const info={id,anchor:a,label:src.label,target:src.source,method,timestamp:Date.now(),
      visibleBefore,clickedAt:method==='click'?Date.now():(existing?.clickedAt||0)};
@@ -253,17 +266,20 @@
  document.addEventListener('pointerover',e=>{
    if(!state.active)return;
    const icon=window.SmartCaptureHover?.hoverSource(e.target,getComputedStyle,{width:innerWidth,height:innerHeight});
-   if(!icon||popupElements().some(el=>el.contains(icon)))return;
+   if(!icon){refreshIdleBaseline();return;}
+   if(popupElements().some(el=>el.contains(icon)))return;
    // Moving between SVG children is not a new interaction.
    if(e.relatedTarget instanceof Node&&icon.contains(e.relatedTarget))return;
    observeTrigger(icon,'hover');
  },true);
  document.addEventListener('pointerout',e=>{
-   if(!state.active||!state.activeHoverId)return;
+   if(!state.active)return;
+   if(!state.activeHoverId){refreshIdleBaseline();return;}
    const info=state.events.get(state.activeHoverId);
    if(!info?.target||!(info.target===e.target||info.target.contains(e.target)))return;
    if(e.relatedTarget instanceof Node&&info.target.contains(e.relatedTarget))return;
    state.activeHoverId=null;
+   refreshIdleBaseline();
  },true);
  document.addEventListener('focusin',e=>{if(state.active)observeTrigger(e.target,'focus');},true);
  function observer(){
@@ -289,6 +305,7 @@
  }
  async function start(){
   state.active=false;state.observing?.disconnect();state.tracker?.reset();
+  if(state.baselineTimer!==null){clearTimeout(state.baselineTimer);state.baselineTimer=null;}
   state.layoutDiagnostics=null;state.items=[];state.events.clear();state.claims.clear();state.dynamicPopups.clear();state.errors=[];state.sourceIds=new WeakMap();state.nextSourceId=0;state.activeHoverId=null;
   state.debug={hoverEvents:0,hoverShots:0,hoverSaved:0,rejections:{'not-stable':0,clipped:0},stages:{noCandidate:0,staleHover:0,wrongOwner:0,invalidCrop:0}};state.shotQueue=Promise.resolve();state.lastShot=0;
   if(!window.SmartCaptureTracker||!window.SmartCaptureAssociation||!window.SmartCaptureHover||!window.SmartCaptureVisualDiff||!window.SmartCaptureSurface||!window.SmartCaptureGeometry)throw Error('Capture modules missing. Reload extension.');
@@ -390,6 +407,7 @@
  async function stop(){
    if(!state.active)throw Error('No active capture.');
    state.observing?.disconnect();
+   if(state.baselineTimer!==null){clearTimeout(state.baselineTimer);state.baselineTimer=null;}
    const results=await state.tracker.flush();
    state.active=false;
    // Never silently download a normal screenshot and call it a successful
