@@ -3,15 +3,15 @@
    One timer per genuine interaction. Mutations only retry the currently
    active trigger, never all historic mouseovers. */
 (() => {
-  function create({capture,delay=120,setTimer=setTimeout,clearTimer=clearTimeout}) {
+  function create({capture,canAttempt=()=>true,delay=120,setTimer=setTimeout,clearTimer=clearTimeout}) {
     const entries=new Map();
     function schedule(e,ms=delay){
-      if(e.done||e.timer!==null||e.running||e.attempts>=2)return;
+      if(e.done||e.timer!==null||e.running||e.attempts>=2||!canAttempt(e.info))return;
       e.timer=setTimer(()=>{e.timer=null;void attempt(e);},ms);
     }
     async function attempt(e){
       if(e.done)return true;
-      if(e.running)return false;
+      if(e.running||!canAttempt(e.info))return false;
       e.running=true;e.attempts++;
       const info=e.info;
       let ok=false;
@@ -40,7 +40,7 @@
     async function flush(){
       const eligible=[];
       for(const e of entries.values()){
-        if(e.timer!==null){clearTimer(e.timer);e.timer=null;if(!e.done&&!e.running)eligible.push(e);}
+        if(e.timer!==null){clearTimer(e.timer);e.timer=null;if(!e.done&&!e.running&&canAttempt(e.info))eligible.push(e);}
       }
       await Promise.all(eligible.map(attempt));
       // Allow running screenshots to complete, but don't launch new
