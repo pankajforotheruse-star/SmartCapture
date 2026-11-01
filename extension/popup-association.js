@@ -38,7 +38,7 @@
       if(!info?.id||!info.anchor||!changedSince(info,popup,text))continue;
       const age=Math.max(0,now-(info.timestamp||0));
       const method=info.method||'click';
-      const lifetime=method==='hover'?1700:method==='focus'?1800:7000;
+      const lifetime=method==='hover'?2500:method==='focus'?2000:6000;
       if(age>lifetime)continue;
       if(method==='hover'&&!hoverEligible(info.target))continue;
       const related=explicitRelation(info.target,popup);
@@ -46,8 +46,10 @@
       // Avoid associating completely unrelated distant overlays. ARIA linking overrides distance.
       const radius=Math.max(360,Math.min(850,Math.max(box.width,box.height)*2));
       if(!related&&distance>radius)continue;
-      const score=(related?10000:0)+(method==='click'?700:method==='focus'?180:130)
-        +(lifetime-age)/lifetime*300-distance*.75;
+      // Recency matters more than a historical click: a newly hovered icon
+      // should own the tooltip it just revealed, even after an earlier click.
+      const score=(related?10000:0)+(method==='click'?145:method==='focus'?105:120)
+        +Math.max(0,1200-age)*.75-distance*.85;
       if(score>highest){highest=score;result=info;}
     }
     return result;
