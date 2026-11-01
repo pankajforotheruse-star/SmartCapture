@@ -1,5 +1,20 @@
 # SmartCapture
 
+## v0.12.3 candidate — Repeatability verification
+
+Two user recordings of v0.12.2 differed: one captured all three tooltips, the other missed Association. A new multi-session Chromium regression **reproduced a missing popup** after a recording restart. The cause was stale baseline visibility: a tooltip still visible when a session started remained marked as "already visible" even after being closed and reopened. The recorder now refreshes its comparison baseline after the pointer leaves popup triggers, including when it began recording with a tooltip already open.
+
+Additional changes:
+- Only the current trigger can own the new popup; historic hover events cannot compete for ownership.
+- Pending screenshots for controls that are no longer hovered are discarded at Stop.
+- Nested SVG/pointerover events on the same source are collapsed into one hover entry.
+- Each recording starts with a fresh tracker and capture state.
+- Integration regression runs **three consecutive full capture sessions**, changes the tooltip order, and verifies three captures each time, no duplicates and no false link-associated popups.
+- The clean-crop, no-background-contamination and nearby-placement safeguards remain unchanged.
+
+**Latest validation:** 42 isolated tests and the multi-session Chromium integration test passed in GitHub Actions. The private business page is still unverified; do not merge this draft until real-user capture results are reviewed.
+
+
 ## v0.12.2 candidate — Eliminate hover retry storms
 
 **Root cause found in v0.12.1:** Every unrelated page mutation retried every old pending hover trigger. In the reported sessions this resulted in 21 or 17 hover screenshots, but zero or one saved popup. Ordinary small text spans were also registered as speculative hover sources.
