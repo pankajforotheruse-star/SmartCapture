@@ -42,7 +42,14 @@
       if(['path','circle','rect','line','polygon','polyline','g','use'].includes(tag))continue;
       const classes=String(element.getAttribute?.('class')||'');
       const style=styleOf(element);
-      if(tags.has(tag)||marker.test(classes)||style?.cursor==='pointer')return element;
+      // Ordinary text spans/labels are NOT hover controls. Treating every
+      // small span as a trigger caused a dozen false interactions and queued
+      // screenshot jobs before genuine discount popups could be captured.
+      const svgIcon=tag==='svg'||tag==='i'||tag==='img';
+      const meaningful=marker.test(classes)||['pointer','help'].includes(style?.cursor)||
+        element.hasAttribute?.('title')||element.hasAttribute?.('aria-describedby')||
+        element.hasAttribute?.('aria-haspopup')||element.hasAttribute?.('data-tooltip');
+      if(svgIcon||meaningful)return element;
     }
     return null;
   }
