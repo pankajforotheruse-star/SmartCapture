@@ -1,5 +1,23 @@
 # SmartCapture
 
+## v0.8 — Reliable capture of multiple controls (experimental)
+
+SmartCapture is intended for general webpages; it does not use fixed popup positions or rules tied to any customer, contract, or sample screenshot. The layout engine finds clear areas using image occupancy and DOM rectangles, places captured popups near their triggering controls, and falls back to extending the output when no safe position exists.
+
+**Capture reliability changes:**
+
+- Keeps independent pending capture records for each clicked or hovered source (including two identical "1 Billing Account" controls in different cards).
+- A second click cannot cancel the first trigger's timer.
+- Stores the exact source rectangle with each triggered popup, rather than using a shared last-clicked element.
+- Only captures a popup that appears or changes after the corresponding interaction; an already-open unrelated popup is ignored.
+- Checks pending captures before Stop & Save; de-duplicates repeats of the same source and popup content.
+- Shows the number of captured and detected interactions when finishing the session.
+
+**Limitations:** The browser screenshot API does not guarantee that extremely fast open/close interactions can be captured. Leave each popup visible briefly while testing. Popups inside cross-origin iframes or unusual shadow roots may need additional support. Changes are covered by isolated regression tests, but **not yet verified on the target business webpage**.
+
+Run `node --test tests/*.test.cjs` to execute layout and interaction regressions.
+
+
 ## v0.7 — Minimize wasted space for tall popups
 
 The layout engine now permits a captured popup to begin inside verified blank space near its source and extend only slightly past the original screenshot height. It penalizes extra height and still rejects overlap with original text, controls, card borders and other popups. If no safe location exists, it retains the below-page fallback. This specifically addresses long product popups appearing below a giant empty gap. Four synthetic layout regression checks pass; behavior on the user's actual application remains unverified.
