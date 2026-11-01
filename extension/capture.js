@@ -33,8 +33,10 @@
      if(!hinted&&!layer)continue;
      const dx=Math.max(0,r.left-(a.x+a.width),a.x-r.right);
      const dy=Math.max(0,r.top-(a.y+a.height),a.y-r.bottom);
-     const newlyVisible=!info.visibleBefore.has(el);
-     const score=(newlyVisible?450:0)+(hinted?200:0)+(layer?80:0)-Math.hypot(dx,dy)*1.5-r.width*r.height/12000;
+     const before=info.visibleBefore.get(el);
+     const newlyVisible=before===undefined;
+     if(!newlyVisible&&before===normalize(label))continue; // unrelated old popup must not be misattributed
+     const score=(newlyVisible?450:240)+(hinted?200:0)+(layer?80:0)-Math.hypot(dx,dy)*1.5-r.width*r.height/12000;
      if(score>best){best=score;winner=el;}
    }
    return best>-420?winner:null;
@@ -104,8 +106,10 @@
    if(popupElements().some(el=>el.contains(src.source)))return; // popup controls are not new source links
    const a=src.anchor,id=[Math.round(a.x/6),Math.round(a.y/6),Math.round(a.width/6),Math.round(a.height/6),src.label].join(':');
    const existing=state.events.get(id);
-   if(method==='hover'&&existing&&Date.now()-existing.clickedAt<1300)return;
-   const info={id,anchor:a,label:src.label,target:src.source,visibleBefore:new Set(popupElements()),clickedAt:method==='click'?Date.now():(existing?.clickedAt||0)};
+   if(existing&&method!=='click')return; // don't overwrite the opening click with later focus/hover
+   if(existing&&Date.now()-existing.clickedAt<800)return;
+   const visibleBefore=new Map(popupElements().map(el=>[el,normalize(textOf(el))]));
+   const info={id,anchor:a,label:src.label,target:src.source,visibleBefore,clickedAt:method==='click'?Date.now():(existing?.clickedAt||0)};
    state.events.set(id,info);
    state.tracker?.note(info);
  }
