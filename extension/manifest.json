@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SmartCapture",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Automatically collect popup states and export one context-linked PNG",
   "permissions": [
     "activeTab",
