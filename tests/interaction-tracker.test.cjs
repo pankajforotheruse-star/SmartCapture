@@ -88,7 +88,7 @@ test('stale hover is discarded when Stop occurs after pointer has left',async()=
   setTimer:fn=>{timers.set(++id,fn);return id;},
   clearTimer:key=>timers.delete(key)
  });
- t.note({id:'first'});t.note({id:'second'});active='second';
+ t.note({id:'first'});active='second';t.note({id:'second'});
  const result=await t.flush();
  assert.deepEqual(shots,['second']);
  assert.equal(result.captured,1);
