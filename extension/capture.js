@@ -354,6 +354,16 @@
    state.observing?.disconnect();
    const results=await state.tracker.flush();
    state.active=false;
+   // Never silently download a normal screenshot and call it a successful
+   // SmartCapture when every requested interaction was rejected.
+   if(!state.items.length){
+     const rejects=Object.entries(state.debug.rejections).filter(([,n])=>n>0);
+     return {message:'No popups captured — PNG not saved. Detected '+results.seen+
+       ' interactions; '+state.debug.hoverEvents+' hover events, '+
+       state.debug.hoverShots+' hover screenshots. '+
+       (rejects.length?'Rejected surfaces: '+rejects.map(([reason,n])=>reason+' '+n).join(', ')+'. ':'')+
+       (state.errors.length?'Screenshot errors: '+state.errors.length+'.':'')};
+   }
    const output=await exportPNG();
    output.message+=' Captured '+results.captured+' of '+results.seen+' detected interactions.';
    if(results.pending)output.message+=' '+results.pending+' did not produce a stable popup.';
