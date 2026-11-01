@@ -78,3 +78,31 @@ test('mutation with no active source must not schedule screenshots',async()=>{
  await session.flush();
  assert.deepEqual(calls,['old-hover']);
 });
+
+test('stale hover is discarded when Stop occurs after pointer has left',async()=>{
+ const context={window:{}};vm.runInNewContext(source,context);
+ const timers=new Map();let id=0,active='first',shots=[];
+ const t=context.window.SmartCaptureTracker.create({
+  capture:async info=>{shots.push(info.id);return true;},
+  canAttempt:info=>info.id===active,
+  setTimer:fn=>{timers.set(++id,fn);return id;},
+  clearTimer:key=>timers.delete(key)
+ });
+ t.note({id:'first'});t.note({id:'second'});active='second';
+ const result=await t.flush();
+ assert.deepEqual(shots,['second']);
+ assert.equal(result.captured,1);
+});
+test('re-entering same source can start fresh capture after failed hover',async()=>{
+ const context={window:{}};vm.runInNewContext(source,context);
+ let next=0;const timers=new Map(),seen=[];
+ const t=context.window.SmartCaptureTracker.create({
+  capture:async info=>{seen.push(info.timestamp);return info.timestamp===2;},
+  setTimer:fn=>{timers.set(++next,fn);return next;},
+  clearTimer:key=>timers.delete(key)
+ });
+ t.note({id:'icon',timestamp:1});await t.flush();
+ t.note({id:'icon',timestamp:2});await t.flush();
+ assert.deepEqual(seen,[1,2]);
+ assert.equal(t.stats().captured,1);
+});
