@@ -144,7 +144,19 @@
     }}));
     const occ=occupancy(image,width,height,obstacles,scale);
     const lineOcc=occupancy(image,width,height,routeObstacles,scale,175);
-    const options=converted.map(item=>candidates(item,occ,width,height,scale));
+    const options=converted.map(item=>{
+      const normal=candidates(item,occ,width,height,scale).map(pos=>({...pos,renderScale:1}));
+      // Try a MINOR reduction only for larger popups, and only when it
+      // substantially improves proximity without covering existing content.
+      // 94% is a hard readability floor; preserve native pixels by default.
+      if(item.width<230*scale||item.height<80*scale)return normal;
+      const factor=.94;
+      const smaller={...item,width:Math.round(item.width*factor),height:Math.round(item.height*factor)};
+      const compact=candidates(smaller,occ,width,height,scale).map(pos=>({
+        ...pos,renderScale:factor,cost:pos.cost+85*scale
+      }));
+      return [...normal,...compact].sort((a,b)=>a.cost-b.cost).slice(0,180);
+    });
     const positions=layoutAll(converted,options,width,height,scale);
     const resultHeight=Math.ceil(Math.max(height,...positions.map(p=>p.y+p.h+12*scale)));
     const routes=positions.map((p,i)=>{
