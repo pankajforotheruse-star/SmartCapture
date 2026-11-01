@@ -1,50 +1,63 @@
 'use strict';
-/* Per-trigger capture coordinator. Independent timers; no cross-trigger cancellation. */
+/* Event-driven, source-specific popup recorder.
+   One timer per genuine interaction. Mutations only retry the currently
+   active trigger, never all historic mouseovers. */
 (() => {
-  function create({capture, delay=180, setTimer=setTimeout, clearTimer=clearTimeout}) {
+  function create({capture,delay=120,setTimer=setTimeout,clearTimer=clearTimeout}) {
     const entries=new Map();
-    function schedule(entry, ms=delay) {
-      if(entry.done)return;
-      if(entry.timer!==null)clearTimer(entry.timer);
-      entry.timer=setTimer(()=>{entry.timer=null;void attempt(entry);},ms);
+    function schedule(e,ms=delay){
+      if(e.done||e.timer!==null||e.running||e.attempts>=2)return;
+      e.timer=setTimer(()=>{e.timer=null;void attempt(e);},ms);
     }
-    async function attempt(entry) {
-      if(entry.done)return true;
-      if(entry.running){entry.again=true;return false;}
-      entry.running=true;
-      let captured=false;
-      try{captured=Boolean(await capture(entry.info));}
-      catch(error){entry.error=String(error?.message||error);}
-      finally{
-        entry.running=false;
-        if(captured)entry.done=true;
-        else if(entry.again){entry.again=false;schedule(entry);}
-      }
-      return captured;
+    async function attempt(e){
+      if(e.done)return true;
+      if(e.running)return false;
+      e.running=true;e.attempts++;
+      const info=e.info;
+      let ok=false;
+      try{ok=!!(await capture(info));}
+      catch(error){e.error=String(error?.message||error);}
+      finally{e.running=false;if(ok)e.done=true;}
+      // A new hover may have arrived during the previous screenshot attempt.
+      if(!ok&&e.info!==info)schedule(e,0);
+      return ok;
     }
-    function note(info, immediate=false) {
+    function note(info){
       if(!info?.id)throw Error('Trigger id missing');
-      let entry=entries.get(info.id);
-      if(!entry){entry={info,done:false,running:false,again:false,timer:null,error:null};entries.set(info.id,entry);}
-      else{entry.info=info;}
-      schedule(entry,immediate?0:delay);
-      return entry;
+      let e=entries.get(info.id);
+      if(!e){e={info,done:false,attempts:0,timer:null,running:false,error:null};entries.set(info.id,e);}
+      else if(!e.done){
+        if(e.info!==info){e.attempts=0;e.info=info;}
+      }
+      schedule(e);
+      return e;
     }
-    function retryPending(){
-      for(const entry of entries.values())if(!entry.done&&!entry.running)schedule(entry,0);
+    function retryPending(id){
+      if(!id)return;
+      const e=entries.get(id);
+      if(e&&!e.done)schedule(e,85);
     }
-    async function flush() {
-      for(const entry of entries.values())if(entry.timer!==null){clearTimer(entry.timer);entry.timer=null;}
-      // Do not start a duplicate capture if one is already running.
-      const pending=Array.from(entries.values()).filter(e=>!e.done&&!e.running);
-      await Promise.all(pending.map(attempt));
-      while(Array.from(entries.values()).some(e=>e.running))await new Promise(r=>setTimer(r,35));
+    async function flush(){
+      const eligible=[];
+      for(const e of entries.values()){
+        if(e.timer!==null){clearTimer(e.timer);e.timer=null;if(!e.done&&!e.running)eligible.push(e);}
+      }
+      await Promise.all(eligible.map(attempt));
+      // Allow running screenshots to complete, but don't launch new
+      // screenshots for stale interactions that disappeared long ago.
+      while([...entries.values()].some(e=>e.running))
+        await new Promise(resolve=>setTimer(resolve,35));
       return stats();
     }
     function stats(){
-      const all=Array.from(entries.values());return {seen:all.length,captured:all.filter(e=>e.done).length,pending:all.filter(e=>!e.done).length};
+      const values=[...entries.values()];
+      return {seen:values.length,captured:values.filter(e=>e.done).length,
+        pending:values.filter(e=>!e.done).length,attempts:values.reduce((n,e)=>n+e.attempts,0)};
     }
-    function reset(){for(const e of entries.values())if(e.timer!==null)clearTimer(e.timer);entries.clear();}
+    function reset(){
+      for(const e of entries.values())if(e.timer!==null)clearTimer(e.timer);
+      entries.clear();
+    }
     return {note,retryPending,flush,stats,reset};
   }
   window.SmartCaptureTracker={create};
