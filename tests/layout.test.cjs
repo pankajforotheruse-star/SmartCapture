@@ -83,3 +83,21 @@ test('tall product popup reuses blank viewport space with minimal extension',()=
  assert.ok(result.positions.every(p=>blockers.every(b=>!intersects(p,b,0))),'no original content may be covered');
  assert.ok(!intersects(result.positions[0],result.positions[1],10),'popup boxes may not overlap');
 });
+
+test('small optional resize places a large popup in nearby safe whitespace',()=>{
+ const layout=engine();
+ const obstacles=[
+  {x:0,y:0,w:800,h:105},{x:0,y:105,w:150,h:395},
+  {x:456,y:105,w:344,h:395},{x:150,y:260,w:306,h:240}
+ ];
+ const result=layout.compute({
+  items:[{width:290,height:122,anchor:{x:304,y:79,width:30,height:18}}],
+  obstacles,image:{},width:800,height:500,scale:1
+ });
+ assert.equal(result.positions.length,1);
+ const p=result.positions[0];
+ assert.equal(p.renderScale,0.94,'use only the controlled 94% reduction');
+ assert.ok(p.y<260,'popup belongs inside the nearest free pocket');
+ assert.ok(obstacles.every(o=>!intersects(p,o)),'resize must not overwrite source content');
+ assert.equal(result.height,500,'the screenshot should not be expanded unnecessarily');
+});
