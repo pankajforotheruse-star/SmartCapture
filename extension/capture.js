@@ -169,25 +169,28 @@
  }
  async function captureTrigger(info){
    if(!state.active)return false;
-   if(info.method==='hover'&&await visualCapture(info))return true;
+   // A real popup element is the primary source of truth. Capture it while
+   // still visible; screenshot differencing is a fallback, not the first step.
    let el=pick(info);
    if(!el){scanFloatingFallback();el=pick(info);}
-   if(!el||!await waitStable(el)||!state.active)return false;
-   if(window.SmartCaptureAssociation.ownerFor(el,textOf(el),state.events.values())?.id!==info.id)return false;
-   const job=async()=>{
-     const elapsed=Date.now()-state.lastShot;
-     if(elapsed<530)await sleep(530-elapsed);
-     if(!state.active||!el.isConnected||!visible(el)||effectiveOpacity(el)<.98)return false;
-     let data;
-     try{data=await shot();}catch(e){state.errors.push('DOM capture: '+e.message);return false;}
-     state.lastShot=Date.now();
-     if(!el.isConnected||!visible(el))return false;
-     const image=await load(data);
-     return cropPopup(image,el,info,info.method==='hover'?'hover':'click');
-   };
-   const queued=state.shotQueue.catch(()=>{}).then(job);
-   state.shotQueue=queued.catch(e=>state.errors.push('DOM job: '+String(e?.message||e)));
-   return queued;
+   if(el&&await waitStable(el)&&state.active&&
+      window.SmartCaptureAssociation.ownerFor(el,textOf(el),state.events.values())?.id===info.id){
+     const job=async()=>{
+       const elapsed=Date.now()-state.lastShot;
+       if(elapsed<530)await sleep(530-elapsed);
+       if(!state.active||!el.isConnected||!visible(el)||effectiveOpacity(el)<.98)return false;
+       let data;
+       try{data=await shot();}catch(e){state.errors.push('DOM capture: '+e.message);return false;}
+       state.lastShot=Date.now();
+       if(!el.isConnected||!visible(el))return false;
+       const image=await load(data);
+       return cropPopup(image,el,info,info.method==='hover'?'hover':'click');
+     };
+     const queued=state.shotQueue.catch(()=>{}).then(job);
+     state.shotQueue=queued.catch(e=>state.errors.push('DOM job: '+String(e?.message||e)));
+     if(await queued)return true;
+   }
+   return info.method==='hover'?visualCapture(info):false;
  }
  function sourceFrom(target,method){
    if(!(target instanceof Element))return null;
