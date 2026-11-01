@@ -41,7 +41,7 @@
   }
   function candidates(item,occ,width,height,scale){
     const w=item.width+4,h=item.height+4;
-    const origin=center(item.anchor),step=Math.max(9,Math.round(13*scale)),gap=Math.round(10*scale);
+    const origin=item.anchor,step=Math.max(7,Math.round(10*scale)),gap=Math.round(10*scale);
     const found=[];
     // A popup may cross the bottom edge if MOST of it occupies genuinely blank space.
     // This avoids moving a 470px product list below the entire viewport when only
@@ -53,7 +53,13 @@
       if(occ.count(r)>0)continue; // hard exclusion for the part over original screenshot
       const addedHeight=Math.max(0,y+h+gap-height);
       const extensionCost=addedHeight>0?65*scale+addedHeight*2.5:0;
-      found.push({...r,cost:distance(origin,center(r))+extensionCost,addedHeight});
+      // Measure distance between the actual popup and source rectangles, rather
+      // than their centers. A popup beside a tag should beat one far below it.
+      const dx=Math.max(0,r.x-(origin.x+origin.w),origin.x-(r.x+r.w));
+      const dy=Math.max(0,r.y-(origin.y+origin.h),origin.y-(r.y+r.h));
+      const edgeDistance=Math.hypot(dx,dy);
+      const alignment=Math.abs((r.y+r.h/2)-(origin.y+origin.h/2))*.03;
+      found.push({...r,cost:edgeDistance+alignment+extensionCost,addedHeight});
     }
     found.sort((a,b)=>a.cost-b.cost);
     const best=[];
@@ -145,17 +151,21 @@
     const occ=occupancy(image,width,height,obstacles,scale);
     const lineOcc=occupancy(image,width,height,routeObstacles,scale,175);
     const options=converted.map(item=>{
-      const normal=candidates(item,occ,width,height,scale).map(pos=>({...pos,renderScale:1}));
-      // Try a MINOR reduction only for larger popups, and only when it
-      // substantially improves proximity without covering existing content.
-      // 94% is a hard readability floor; preserve native pixels by default.
-      if(item.width<230*scale||item.height<80*scale)return normal;
-      const factor=.94;
-      const smaller={...item,width:Math.round(item.width*factor),height:Math.round(item.height*factor)};
-      const compact=candidates(smaller,occ,width,height,scale).map(pos=>({
-        ...pos,renderScale:factor,cost:pos.cost+85*scale
-      }));
-      return [...normal,...compact].sort((a,b)=>a.cost-b.cost).slice(0,180);
+      const all=[];
+      // Preserve full resolution whenever possible. Only shrink modestly when
+      // it unlocks a substantially closer safe pocket next to the trigger.
+      const scales=item.width>=220*scale&&item.height>=75*scale
+        ? [[1,0],[.95,26],[.90,58],[.85,94]]
+        : [[1,0]];
+      for(const [factor,penalty] of scales){
+        const adjusted=factor===1?item:{
+          ...item,width:Math.round(item.width*factor),height:Math.round(item.height*factor)
+        };
+        for(const pos of candidates(adjusted,occ,width,height,scale)){
+          all.push({...pos,renderScale:factor,cost:pos.cost+penalty*scale});
+        }
+      }
+      return all.sort((a,b)=>a.cost-b.cost).slice(0,240);
     });
     const positions=layoutAll(converted,options,width,height,scale);
     const resultHeight=Math.ceil(Math.max(height,...positions.map(p=>p.y+p.h+12*scale)));
