@@ -1,8 +1,8 @@
 'use strict';
 (() => {
- if(window.__smartCaptureV9)return;
- window.__smartCaptureV9=true;
- const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),errors:[]};
+ if(window.__smartCaptureV10)return;
+ window.__smartCaptureV10=true;
+ const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),errors:[]};
  const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
  const sleep=t=>new Promise(r=>setTimeout(r,t));
  const visible=el=>{if(!(el instanceof Element))return false;const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>75&&r.height>35&&r.width<innerWidth*.85&&r.height<innerHeight*.94&&r.top>=-2&&r.left>=-2&&r.bottom<=innerHeight+2&&r.right<=innerWidth+2&&s.visibility!=='hidden'&&s.display!=='none'&&+s.opacity!==0;};
@@ -11,7 +11,14 @@
  async function shot(){const r=await chrome.runtime.sendMessage({type:'SCREENSHOT'});if(!r?.image)throw Error(r?.error||'Cannot capture tab');return r.image;}
  const load=src=>new Promise((ok,bad)=>{const im=new Image();im.onload=()=>ok(im);im.onerror=()=>bad(Error('Image decoding failed'));im.src=src;});
  const popupSelector='[role="dialog"],[role="tooltip"],[role="menu"],[role="listbox"],[aria-modal="true"],[class*="popover" i],[class*="popup" i],[class*="dropdown" i],[class*="tooltip" i],[class*="overlay" i],[class*="floating" i]';
- function popupElements(){return Array.from(document.querySelectorAll(popupSelector)).filter(visible);}
+ function popupElements(){
+   const found=new Set(document.querySelectorAll(popupSelector));
+   for(const el of state.dynamicPopups){
+     if(!el.isConnected){state.dynamicPopups.delete(el);continue;}
+     found.add(el);
+   }
+   return [...found].filter(visible);
+ }
  function effectiveOpacity(el){
    let opacity=1;
    for(let n=el;n instanceof Element;n=n.parentElement){
@@ -97,9 +104,10 @@
    state.shotQueue=queued.catch(e=>{state.errors.push(String(e?.message||e));});
    return queued;
  }
- function sourceFrom(target){
+ function sourceFrom(target,method){
    if(!(target instanceof Element))return null;
-   let source=target.closest('button,a,[role="button"],[aria-haspopup],[aria-expanded],input,[tabindex]');
+   let source=(method==='hover'?window.SmartCaptureHover?.hoverSource(target,getComputedStyle,{width:innerWidth,height:innerHeight}):null)
+     ||target.closest('button,a,[role="button"],[aria-haspopup],[aria-expanded],input,[tabindex]');
    if(!source){
      for(let el=target,n=0;el&&n<4;el=el.parentElement,n++){
        const style=getComputedStyle(el);
@@ -114,7 +122,7 @@
  }
  function observeTrigger(target,method){
    if(!state.active)return;
-   const src=sourceFrom(target);if(!src)return;
+   const src=sourceFrom(target,method);if(!src)return;
    if(popupElements().some(el=>el.contains(src.source)))return; // popup controls are not new source links
    if(method==='hover'&&!window.SmartCaptureAssociation?.hoverEligible(src.source))return;
    const a=src.anchor,id=[Math.round(a.x/6),Math.round(a.y/6),Math.round(a.width/6),Math.round(a.height/6),src.label].join(':');
@@ -135,24 +143,33 @@
  document.addEventListener('pointerover',e=>{
    if(!state.active)return;
    const target=e.target;
-   const interactive=target?.closest?.('button,a,[role="button"],[aria-haspopup],[aria-expanded],[title],[aria-label]');
-   if(!interactive||popupElements().some(el=>el.contains(interactive)))return;
-   observeTrigger(interactive,'hover');
+   const icon=window.SmartCaptureHover?.hoverSource(target,getComputedStyle,{width:innerWidth,height:innerHeight});
+   if(!icon||popupElements().some(el=>el.contains(icon)))return;
+   observeTrigger(icon,'hover');
  },true);
  document.addEventListener('focusin',e=>{if(state.active)observeTrigger(e.target,'focus');},true);
  function observer(){
    let last=0;
-   state.observing=new MutationObserver(()=>{
+   state.observing=new MutationObserver(records=>{
      if(!state.active||!state.tracker)return;
-     const now=Date.now();if(now-last<140)return;last=now;
+     const helper=window.SmartCaptureHover,view={width:innerWidth,height:innerHeight};
+     // Discover floating panels based on DOM changes, not CSS framework names.
+     for(const record of records){
+       const nodes=[record.target,...record.addedNodes];
+       for(const n of nodes){
+         const floating=helper?.floatingAncestor(n,getComputedStyle,view);
+         if(floating)state.dynamicPopups.add(floating);
+       }
+     }
+     const now=Date.now();if(now-last<70)return;last=now;
      state.tracker.retryPending();
    });
    state.observing.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style','aria-expanded','aria-hidden']});
  }
  async function start(){
   state.active=false;state.observing?.disconnect();state.tracker?.reset();
-  state.items=[];state.events.clear();state.claims.clear();state.errors=[];state.shotQueue=Promise.resolve();state.lastShot=0;
-  if(!window.SmartCaptureTracker||!window.SmartCaptureAssociation)throw Error('Capture modules missing. Reload extension.');
+  state.items=[];state.events.clear();state.claims.clear();state.dynamicPopups.clear();state.errors=[];state.shotQueue=Promise.resolve();state.lastShot=0;
+  if(!window.SmartCaptureTracker||!window.SmartCaptureAssociation||!window.SmartCaptureHover)throw Error('Capture modules missing. Reload extension.');
   await sleep(150);const image=await shot();const im=await load(image);
   state.base={image,width:im.naturalWidth,height:im.naturalHeight,viewportWidth:innerWidth,viewportHeight:innerHeight};
   // Text-level occupancy: never block whole white cards merely because they're containers.
@@ -194,7 +211,7 @@
     protectedRects.push({x,y,w:thickness,h},{x:x+w-thickness,y,w:thickness,h});
   }
   state.protectedRects=protectedRects;
-  state.tracker=window.SmartCaptureTracker.create({capture:captureTrigger,delay:170});
+  state.tracker=window.SmartCaptureTracker.create({capture:captureTrigger,delay:85});
   state.active=true;observer();return {message:'Recording started. Interact with popups, then Stop & Save PNG.'};
  }
  async function exportPNG(){
@@ -245,7 +262,7 @@
    return output;
  }
  chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
-  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.9.0',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
+  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.10.0',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
   action.then(sendResponse).catch(e=>sendResponse({error:e.message}));return true;
  });
 })();
