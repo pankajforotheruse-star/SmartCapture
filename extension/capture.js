@@ -243,7 +243,9 @@
   for(let i=0;i<state.items.length;i++){
     const item=state.items[i],pos=result.positions[i],overlay=await load(item.image);
     ctx.fillStyle='#fff';ctx.fillRect(pos.x,pos.y,pos.w,pos.h);
-    ctx.drawImage(overlay,pos.x+2,pos.y+2);
+    const renderScale=pos.renderScale||1;
+    if(renderScale!==1){ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';}
+    ctx.drawImage(overlay,pos.x+2,pos.y+2,item.width*renderScale,item.height*renderScale);
     ctx.strokeStyle=colors[i%colors.length];ctx.lineWidth=Math.max(1.2,sx*1.5);
     ctx.strokeRect(pos.x+.5,pos.y+.5,pos.w-1,pos.h-1);
   }
