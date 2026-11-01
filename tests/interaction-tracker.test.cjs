@@ -56,3 +56,25 @@ test('independent sources remain separate even when labels match',async()=>{
  await session.flush();
  assert.deepEqual(recorded,[155,377]);
 });
+
+test('mutations retry only the named active source, not old hovers',async()=>{
+ const attempted=[];
+ const session=tracker(async info=>{attempted.push(info.id);return false;});
+ for(const id of ['unrelated-a','real-price-icon','unrelated-b'])session.note({id});
+ await session.flush();
+ session.retryPending('real-price-icon');
+ await session.flush();
+ assert.deepEqual(attempted,['unrelated-a','real-price-icon','unrelated-b','real-price-icon']);
+ session.retryPending('real-price-icon');
+ await session.flush();
+ assert.equal(attempted.length,4,'only two attempts allowed per hover activation');
+});
+test('mutation with no active source must not schedule screenshots',async()=>{
+ const calls=[];
+ const session=tracker(async info=>{calls.push(info.id);return false;});
+ session.note({id:'old-hover'});
+ await session.flush();
+ session.retryPending();
+ await session.flush();
+ assert.deepEqual(calls,['old-hover']);
+});
