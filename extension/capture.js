@@ -1,8 +1,8 @@
 'use strict';
 (() => {
- if(window.__smartCaptureV11)return;
- window.__smartCaptureV11=true;
- const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),lastFloatingScan:0,errors:[],debug:{hoverEvents:0,hoverShots:0,hoverSaved:0}};
+ if(window.__smartCaptureV12)return;
+ window.__smartCaptureV12=true;
+ const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),lastFloatingScan:0,errors:[],sourceIds:new WeakMap(),nextSourceId:0,debug:{hoverEvents:0,hoverShots:0,hoverSaved:0}};
  const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
  const sleep=t=>new Promise(r=>setTimeout(r,t));
  const visible=el=>{if(!(el instanceof Element))return false;const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>75&&r.height>35&&r.width<innerWidth*.85&&r.height<innerHeight*.94&&r.top>=-2&&r.left>=-2&&r.bottom<=innerHeight+2&&r.right<=innerWidth+2&&s.visibility!=='hidden'&&s.display!=='none'&&+s.opacity!==0;};
@@ -86,32 +86,69 @@
    }
    return false;
  }
+ function minReadableFont(el) {
+   let smallest=Infinity,checked=0;
+   for(const node of [el,...el.querySelectorAll('*')]){
+     if(++checked>150)break;
+     if(!node.textContent?.trim())continue;
+     const style=getComputedStyle(node),font=Number.parseFloat(style.fontSize);
+     if(font>=8&&font<smallest)smallest=font;
+   }
+   return Number.isFinite(smallest)?smallest:12;
+ }
+ function cropPopup(image,element,info,kind){
+   const surface=window.SmartCaptureSurface;
+   if(!surface||!element?.isConnected||!visible(element))return false;
+   const bounds=element.getBoundingClientRect(),css=getComputedStyle(element);
+   // Reject transparent/unbounded containers: their screenshot crops leak page text.
+   if(!surface.opaqueColor(css.backgroundColor)||effectiveOpacity(element)<.98)return false;
+   const scale=window.SmartCaptureGeometry.scaleFor(image.naturalWidth,innerWidth);
+   const imageBox=window.SmartCaptureGeometry.rectInImage(bounds,scale,image.naturalWidth,image.naturalHeight);
+   if(!imageBox||imageBox.width<55||imageBox.height<22)return false;
+   const {x,y,width:w,height:h}=imageBox;
+   const content=normalize(textOf(element));
+   if(content.length<5)return false;
+   const key='source:'+info.id+'|content:'+content;
+   if(state.items.some(item=>item.key===key))return true;
+   const identity=surface.popupSignature?.(element,content)||window.SmartCaptureAssociation.signature(element,content);
+   const claimed=state.claims.get(identity);
+   if(claimed&&claimed!==info.id)return false;
+   const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;
+   canvas.getContext('2d').drawImage(image,x,y,w,h,0,0,w,h);
+   state.claims.set(identity,info.id);
+   state.items.push({
+     key,kind,sourceId:info.id,label:info.label,anchor:info.anchor,
+     image:canvas.toDataURL('image/png'),width:w,height:h,
+     minFontPx:minReadableFont(element)
+   });
+   return true;
+ }
  async function visualCapture(info){
-   // Images are compared at native resolution; triggered hover changes are not
-   // required to have a particular HTML class, role or position.
-   if(!state.active||!state.baseDecoded||!window.SmartCaptureVisualDiff)return false;
+   if(!state.active||!state.baseDecoded||!window.SmartCaptureVisualDiff||
+      !window.SmartCaptureSurface)return false;
+   // Never capture the guessed image-difference rectangle itself.
+   // Only a visually matched, opaque DOM surface may be used as a screenshot crop.
    const job=async()=>{
      const elapsed=Date.now()-state.lastShot;
-     if(elapsed<530)await sleep(530-elapsed); // Chrome visible-tab capture quota
+     if(elapsed<530)await sleep(530-elapsed);
      if(!state.active)return false;
      let data;
      try{data=await shot();}catch(e){state.errors.push('hover screenshot: '+e.message);return false;}
      state.lastShot=Date.now();state.debug.hoverShots++;
      const image=await load(data);
-     const region=window.SmartCaptureVisualDiff.fromImages(
+     const changed=window.SmartCaptureVisualDiff.fromImages(
        state.baseDecoded,image,info.anchor,{width:state.base.viewportWidth,height:state.base.viewportHeight});
-     if(!region)return false;
-     const near=info.id+'|visual|'+Math.round(region.x/20)+':'+Math.round(region.y/20)+':'+
-       Math.round(region.width/20)+':'+Math.round(region.height/20);
-     if(state.items.some(item=>item.key===near))return true;
-     const crop=document.createElement('canvas');
-     crop.width=Math.round(region.width);crop.height=Math.round(region.height);
-     crop.getContext('2d').drawImage(image,
-       region.x,region.y,region.width,region.height,0,0,crop.width,crop.height);
-     state.items.push({key:near,label:info.label,anchor:info.anchor,image:crop.toDataURL('image/png'),
-       width:crop.width,height:crop.height});
-     state.debug.hoverSaved++;
-     return true;
+     if(!changed)return false;
+     const scale=window.SmartCaptureGeometry.scaleFor(image.naturalWidth,innerWidth);
+     const region={x:changed.x/scale,y:changed.y/scale,
+       width:changed.width/scale,height:changed.height/scale};
+     const match=window.SmartCaptureSurface.identifyOnPage(
+       region,info.anchor,{width:innerWidth,height:innerHeight},document,getComputedStyle);
+     if(!match)return false; // no clean DOM boundary; omit rather than bleed background
+     if(window.SmartCaptureAssociation.ownerFor(match.element,textOf(match.element),state.events.values())?.id!==info.id)return false;
+     const saved=cropPopup(image,match.element,info,'hover');
+     if(saved)state.debug.hoverSaved++;
+     return saved;
    };
    const queued=state.shotQueue.catch(()=>{}).then(job);
    state.shotQueue=queued.catch(e=>state.errors.push('hover job: '+String(e?.message||e)));
@@ -119,50 +156,24 @@
  }
  async function captureTrigger(info){
    if(!state.active)return false;
-   if(info.method==='hover'){
-     const visual=await visualCapture(info);
-     if(visual)return true;
-     // Fallback to DOM crop if a very faint popup was not detectable visually.
-   }
+   if(info.method==='hover'&&await visualCapture(info))return true;
    let el=pick(info);
    if(!el){scanFloatingFallback();el=pick(info);}
    if(!el||!await waitStable(el)||!state.active)return false;
-   const association=window.SmartCaptureAssociation;
-   const stableText=normalize(textOf(el)),id=info.id+'|'+stableText;
-   const popupSignature=association.signature(el,stableText);
-   if(state.items.some(it=>it.key===id))return true;
-   if(state.claims.has(popupSignature))return state.claims.get(popupSignature)===info.id;
-   // Serialise screenshot API calls. No global lock that drops another trigger.
-   const task=async()=>{
+   if(window.SmartCaptureAssociation.ownerFor(el,textOf(el),state.events.values())?.id!==info.id)return false;
+   const job=async()=>{
      const elapsed=Date.now()-state.lastShot;
-     if(elapsed<560)await sleep(560-elapsed);
-     if(!state.active||!el.isConnected||!visible(el)||effectiveOpacity(el)<.97)return false;
-     if(association.ownerFor(el,textOf(el),state.events.values())?.id!==info.id)return false;
-     if(state.claims.has(popupSignature))return state.claims.get(popupSignature)===info.id;
-     const beforeRect=el.getBoundingClientRect(),beforeText=normalize(textOf(el));
+     if(elapsed<530)await sleep(530-elapsed);
+     if(!state.active||!el.isConnected||!visible(el)||effectiveOpacity(el)<.98)return false;
      let data;
-     try{data=await shot();}catch(e){state.errors.push(e.message);return false;}
+     try{data=await shot();}catch(e){state.errors.push('DOM capture: '+e.message);return false;}
      state.lastShot=Date.now();
-     if(!el.isConnected||!visible(el)||effectiveOpacity(el)<.97)return false;
-     const r=el.getBoundingClientRect();
-     if(Math.abs(r.left-beforeRect.left)>3||Math.abs(r.top-beforeRect.top)>3||
-        Math.abs(r.width-beforeRect.width)>3||Math.abs(r.height-beforeRect.height)>3||
-        normalize(textOf(el))!==beforeText)return false; // don't save a closing/moving popup
+     if(!el.isConnected||!visible(el))return false;
      const image=await load(data);
-     const sx=image.naturalWidth/innerWidth,sy=image.naturalHeight/innerHeight;
-     const x=Math.max(0,Math.round(r.left*sx)),y=Math.max(0,Math.round(r.top*sy));
-     const w=Math.min(image.naturalWidth-x,Math.round(r.width*sx)),h=Math.min(image.naturalHeight-y,Math.round(r.height*sy));
-     if(w<24||h<24)return false;
-     const crop=document.createElement('canvas');crop.width=w;crop.height=h;
-     crop.getContext('2d').drawImage(image,x,y,w,h,0,0,w,h);
-     if(!state.items.some(it=>it.key===id)) {
-       state.claims.set(popupSignature,info.id);
-       state.items.push({key:id,label:info.label,anchor:info.anchor,image:crop.toDataURL('image/png'),width:w,height:h});
-     }
-     return true;
+     return cropPopup(image,el,info,info.method==='hover'?'hover':'click');
    };
-   const queued=state.shotQueue.catch(()=>{}).then(task);
-   state.shotQueue=queued.catch(e=>{state.errors.push(String(e?.message||e));});
+   const queued=state.shotQueue.catch(()=>{}).then(job);
+   state.shotQueue=queued.catch(e=>state.errors.push('DOM job: '+String(e?.message||e)));
    return queued;
  }
  function sourceFrom(target,method){
@@ -186,12 +197,14 @@
    const src=sourceFrom(target,method);if(!src)return;
    if(popupElements().some(el=>el.contains(src.source)))return; // popup controls are not new source links
    if(method==='hover'&&!window.SmartCaptureAssociation?.hoverEligible(src.source))return;
-   const a=src.anchor,id=[Math.round(a.x/6),Math.round(a.y/6),Math.round(a.width/6),Math.round(a.height/6),src.label].join(':');
+   const a=src.anchor;
+   if(!state.sourceIds.has(src.source))state.sourceIds.set(src.source,++state.nextSourceId);
+   const id=String(state.sourceIds.get(src.source));
    const existing=state.events.get(id);
    if(existing&&method!=='click'&&Date.now()-existing.timestamp<750)return; // dedupe nested hover events but permit retry on rehover
    if(existing&&Date.now()-existing.clickedAt<800)return;
    if(method==='hover')state.debug.hoverEvents++;
-   const visibleBefore=new Map(popupElements().map(el=>[el,normalize(textOf(el))]));
+   const visibleBefore=method==='hover' ? new Map(state.baselineVisible||[]) : new Map(popupElements().map(el=>[el,normalize(textOf(el))]));
    const info={id,anchor:a,label:src.label,target:src.source,method,timestamp:Date.now(),
      visibleBefore,clickedAt:method==='click'?Date.now():(existing?.clickedAt||0)};
    state.events.set(id,info);
@@ -230,13 +243,14 @@
  }
  async function start(){
   state.active=false;state.observing?.disconnect();state.tracker?.reset();
-  state.items=[];state.events.clear();state.claims.clear();state.dynamicPopups.clear();state.errors=[];
+  state.layoutDiagnostics=null;state.items=[];state.events.clear();state.claims.clear();state.dynamicPopups.clear();state.errors=[];state.sourceIds=new WeakMap();state.nextSourceId=0;
   state.debug={hoverEvents:0,hoverShots:0,hoverSaved:0};state.shotQueue=Promise.resolve();state.lastShot=0;
-  if(!window.SmartCaptureTracker||!window.SmartCaptureAssociation||!window.SmartCaptureHover||!window.SmartCaptureVisualDiff)throw Error('Capture modules missing. Reload extension.');
+  if(!window.SmartCaptureTracker||!window.SmartCaptureAssociation||!window.SmartCaptureHover||!window.SmartCaptureVisualDiff||!window.SmartCaptureSurface||!window.SmartCaptureGeometry)throw Error('Capture modules missing. Reload extension.');
   await sleep(150);const image=await shot();const im=await load(image);
   state.base={image,width:im.naturalWidth,height:im.naturalHeight,viewportWidth:innerWidth,viewportHeight:innerHeight};
   state.baseDecoded=im;state.lastShot=Date.now();
   scanFloatingFallback(true); // establish baseline before any new hover or click
+  state.baselineVisible=new Map(popupElements().map(el=>[el,normalize(textOf(el))]));
   // Text-level occupancy: never block whole white cards merely because they're containers.
   const protectedRects=[];const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
   let node,seen=0;
@@ -282,10 +296,11 @@
  async function exportPNG(){
   if(!state.base)throw Error('No capture session.');
   if(!window.SmartCaptureLayout)throw Error('Layout engine missing. Reload extension and tab.');
-  const b=state.base,img=await load(b.image),sx=b.width/b.viewportWidth,sy=b.height/b.viewportHeight;
+  const b=state.base,img=await load(b.image),sx=window.SmartCaptureGeometry.scaleFor(b.width,b.viewportWidth),sy=sx;
   const obstacles=state.protectedRects.filter(r=>r.w>0&&r.h>0).map(r=>({x:r.x*sx,y:r.y*sy,w:r.w*sx,h:r.h*sy}));
   const routeObstacles=(state.routeRects||state.protectedRects).filter(r=>r.w>0&&r.h>0).map(r=>({x:r.x*sx,y:r.y*sy,w:r.w*sx,h:r.h*sy}));
   const result=window.SmartCaptureLayout.compute({items:state.items,obstacles,routeObstacles,image:img,width:b.width,height:b.height,scale:sx});
+  state.layoutDiagnostics=result.positions.map((p,i)=>({x:p.x,y:p.y,width:p.w,height:p.h,renderScale:p.renderScale||1,source:state.items[i].anchor}));
   const canvas=document.createElement('canvas');canvas.width=b.width;canvas.height=result.height;
   const ctx=canvas.getContext('2d');ctx.fillStyle='#f7f7fc';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0);
   const colors=['#067b99','#8153b2','#a35a19','#228158','#b34577'];
@@ -331,7 +346,7 @@
    return output;
  }
  chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
-  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.11.0',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0,hoverShots:state.debug.hoverShots,hoverSaved:state.debug.hoverSaved}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
+  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.12.0',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0,hoverShots:state.debug.hoverShots,hoverSaved:state.debug.hoverSaved}):msg?.type==='METRICS'?Promise.resolve({items:state.items.map(i=>({kind:i.kind,width:i.width,height:i.height,anchor:i.anchor,minFontPx:i.minFontPx})),layout:state.layoutDiagnostics||null}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
   action.then(sendResponse).catch(e=>sendResponse({error:e.message}));return true;
  });
 })();

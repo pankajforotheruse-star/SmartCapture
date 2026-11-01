@@ -6,6 +6,21 @@
   const marker=/icon|info|help|question|discount|price|hint|tooltip|popover|trigger/i;
   function hoverSource(target,styleOf,viewport){
     if(!target?.closest)return null;
+    // Prefer the precise icon under the pointer to a larger parent price label.
+    // This prevents "DKK 319.00" from being anchored when its adjacent %
+    // information icon is the real hover target.
+    const icon=target.closest('svg,i,[role="img"],[data-tooltip],[class*="info-icon" i],[class*="help-icon" i]');
+    if(icon){
+      // An SVG and its outer 17px icon bubble represent ONE hover source.
+      // Use that small interactive wrapper when it exists; never a whole price label.
+      const parent=icon.parentElement,outer=parent?.getBoundingClientRect?.();
+      const cls=String(parent?.getAttribute?.('class')||'');
+      if(outer&&outer.width>=10&&outer.height>=10&&outer.width<=42&&outer.height<=42&&
+        (/icon|info|help|tooltip/i.test(cls)||parent?.hasAttribute?.('aria-label')||
+          ['pointer','help'].includes(styleOf(parent)?.cursor)))return parent;
+      const r=icon.getBoundingClientRect?.();
+      if(r&&r.width>=5&&r.height>=5&&r.width<=42&&r.height<=42)return icon;
+    }
     const marked=target.closest(interactive);
     if(marked&&marked.tagName?.toLowerCase()==='a'){
       // Preserve v0.9's safeguard against plain filename links.

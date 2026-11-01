@@ -61,3 +61,12 @@ test('multiple popups around separate small icons keep distinct owners',()=>{
  assert.equal(relation.ownerFor(popupA,'Total Discount',[evA,evB],5000)?.id,'a');
  assert.equal(relation.ownerFor(popupB,'Current Discount',[evA,evB],5000)?.id,'b');
 });
+
+test('small info bubble stays the canonical owner for nested svg paths',()=>{
+ const outer=el('SPAN',{x:712,y:180,w:17,h:17},{cursor:'help'},{class:'price-info-icon'});
+ const svg=el('SVG',{x:714,y:182,w:12,h:12},{cursor:'help'},{},outer);
+ const path=el('PATH',{x:717,y:185,w:6,h:6},{cursor:'help'},{},svg);
+ assert.equal(hover.hoverSource(path,styleOf,screen),outer);
+ assert.equal(hover.hoverSource(svg,styleOf,screen),outer);
+ assert.equal(hover.hoverSource(outer,styleOf,screen),outer);
+});

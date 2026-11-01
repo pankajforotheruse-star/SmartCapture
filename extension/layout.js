@@ -154,8 +154,11 @@
       const all=[];
       // Preserve full resolution whenever possible. Only shrink modestly when
       // it unlocks a substantially closer safe pocket next to the trigger.
-      const scales=item.width>=220*scale&&item.height>=75*scale
-        ? [[1,0],[.95,26],[.90,58],[.85,94]]
+      const fontPx=Number(item.minFontPx)||12;
+      // Do not reduce small popup text below 10 CSS pixels. 90% is the absolute
+      // shrink limit even for large fonts. Place farther away if necessary.
+      const scales=item.width>=190*scale&&item.height>=70*scale
+        ? [[1,0],[.97,9],[.94,23],[.90,47]].filter(([factor])=>fontPx*factor>=10)
         : [[1,0]];
       for(const [factor,penalty] of scales){
         const adjusted=factor===1?item:{

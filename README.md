@@ -1,5 +1,28 @@
 # SmartCapture
 
+## v0.12.0 candidate — Reliability refactor (draft, not on main)
+
+This is a development candidate for review and validation, **not a confirmed fix for private business applications**.
+
+### Capture contract
+
+1. An interaction is anchored to the smallest appropriate source control (e.g. the 17px info icon, not the surrounding price).
+2. A popup's crop rectangle **must come from a visible, opaque DOM surface**. Screenshot pixel differences may locate that surface but must never define the saved crop.
+3. If the tool cannot identify a clean popup boundary, it intentionally skips capture instead of compositing background data inside it.
+4. A stable source element identity and normalized popup content prevent repeat hovers from making duplicate popups.
+5. Placement searches existing whitespace relative to the source, prefers source-to-popup edge proximity, and may use 97%, 94% or 90% size when required. The text size must remain at least 10 CSS pixels after scaling.
+6. Connectors follow the source control. No popup may cover content on the base screenshot.
+
+### Testing
+
+- Isolated Node layout, popup boundary, hover identity and dedup tests.
+- A synthetic **real Chromium browser extension test** simulating Association, Discount and Current hover popups, repeated hover and a filename link that opens nothing.
+- The browser test additionally asserts that exported crop sizes correspond to real popup DOM bounds and that anchors are icon-sized.
+- Run automatically in GitHub Actions on the draft pull request. Test and review the private business application separately before merging.
+
+**Known trade-off:** Styled surfaces that are genuinely transparent, and popup content in inaccessible cross-origin frames, may not be captured. A missing capture is preferred over a misleading/contaminated image. Hover states shorter than Chrome's tab-screenshot rate limit may also be missed.
+
+
 ## v0.11 — Visual-difference hover capture and nearby placement (experimental)
 
 This release addresses hover panels that are visible in the browser but never collected by the DOM-based recorder. For hovered controls, SmartCapture now takes a tab screenshot **while the pointer is still over the control**, compares it with the untouched base screenshot, and locates a substantial newly visible region near that control. This works as a fallback for CSS-only, framework-specific and non-semantic popups. It rejects tiny hover highlights and distant visual changes. Standard DOM-based capture remains available if visual detection finds nothing.
