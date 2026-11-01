@@ -70,3 +70,8 @@ test('small info bubble stays the canonical owner for nested svg paths',()=>{
  assert.equal(hover.hoverSource(svg,styleOf,screen),outer);
  assert.equal(hover.hoverSource(outer,styleOf,screen),outer);
 });
+
+test('ordinary small text spans do not count as hover popup triggers',()=>{
+ const regular=el('SPAN',{x:580,y:123,w:80,h:15},{cursor:'auto'},{class:'ordinary-text'});
+ assert.equal(hover.hoverSource(regular,styleOf,screen),null);
+});
