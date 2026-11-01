@@ -41,6 +41,11 @@
       const x=clamp(left*tile-5,0,width),y=clamp(top*tile-5,0,height);
       const w=Math.min(width-x,(right-left+1)*tile+10),h=Math.min(height-y,(bottom-top+1)*tile+10);
       if(w<70||h<34||total<90||w*h>width*height*.22)continue;
+      // Ignore a source button's own hover color change. A genuine popup normally
+      // extends materially beyond the hovered element's original bounds.
+      const overlapsAnchor=x<anchor.x+anchor.width&&x+w>anchor.x&&
+        y<anchor.y+anchor.height&&y+h>anchor.y;
+      if(overlapsAnchor&&w<=anchor.width+50&&h<=anchor.height+50)continue;
       const dx=Math.max(0,x-(anchor.x+anchor.width),anchor.x-(x+w));
       const dy=Math.max(0,y-(anchor.y+anchor.height),anchor.y-(y+h));
       const distance=Math.hypot(dx,dy),radius=Math.max(380,Math.min(750,Math.max(w,h)*2));
