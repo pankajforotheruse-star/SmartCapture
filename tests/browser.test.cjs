@@ -36,11 +36,14 @@ test('browser extension: independently captures three tooltip owners once',async
   const started=await send('START');
   assert.ok(!started?.error,started?.error);
   const expected=[],iconBoxes=[];
-  for(const [icon,popup] of [['#assoc-icon','#association-panel'],
-    ['#discount-icon','#discount-popup'],['#current-icon','#current-popup']]){
-   await page.locator(icon).hover();await page.waitForTimeout(1800);
+  for(const [index,[icon,popup]] of [['#assoc-icon','#association-panel'],
+    ['#discount-icon','#discount-popup'],['#current-icon','#current-popup']].entries()){
+   await page.locator(icon).hover();await page.waitForTimeout(1100);
    expected.push(await page.locator(popup).boundingBox());
    iconBoxes.push(await page.locator(icon).boundingBox());
+   const progress=await send('STATUS');
+   assert.equal(progress.count,index+1,'Hover '+icon+' was missed: '+JSON.stringify(progress));
+   assert.ok(progress.detected<=index+2,'Excess trigger events on '+icon+': '+JSON.stringify(progress));
   }
   const metrics=await send('METRICS');
   assert.equal(metrics.items.length,3,'Must identify three real popup surfaces');
