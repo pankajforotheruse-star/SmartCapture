@@ -1,8 +1,8 @@
 'use strict';
 (() => {
- if(window.__smartCaptureV8)return;
- window.__smartCaptureV8=true;
- const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),errors:[]};
+ if(window.__smartCaptureV9)return;
+ window.__smartCaptureV9=true;
+ const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),errors:[]};
  const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
  const sleep=t=>new Promise(r=>setTimeout(r,t));
  const visible=el=>{if(!(el instanceof Element))return false;const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>75&&r.height>35&&r.width<innerWidth*.85&&r.height<innerHeight*.94&&r.top>=-2&&r.left>=-2&&r.bottom<=innerHeight+2&&r.right<=innerWidth+2&&s.visibility!=='hidden'&&s.display!=='none'&&+s.opacity!==0;};
@@ -21,22 +21,27 @@
    return opacity;
  }
  function pick(info){
-   const pool=popupElements(),a=info.anchor;
+   const pool=popupElements(),a=info.anchor,association=window.SmartCaptureAssociation;
+   if(!association)return null;
    let winner=null,best=-Infinity;
    for(const el of pool){
      if(el===info.target||el.contains(info.target))continue;
      const r=el.getBoundingClientRect(),label=textOf(el);
      if(label.length<6||label.length>4500)continue;
-     const s=getComputedStyle(el),classes=String(el.className||'');
+     // Multiple pending interactions may observe one newly opened popup.
+     // Only the most plausible ORIGINAL trigger may claim that popup.
+     const owner=association.ownerFor(el,label,state.events.values());
+     if(owner?.id!==info.id)continue;
+     const signature=association.signature(el,label);
+     const claimed=state.claims.get(signature);
+     if(claimed&&claimed!==info.id)continue;
+     const style=getComputedStyle(el),classes=String(el.className||'');
      const hinted=/popover|popup|tooltip|dropdown|dialog|menu|overlay|floating/i.test(classes)||el.hasAttribute('role');
-     const layer=['absolute','fixed','sticky'].includes(s.position)||parseInt(s.zIndex,10)>1;
+     const layer=['absolute','fixed','sticky'].includes(style.position)||parseInt(style.zIndex,10)>1;
      if(!hinted&&!layer)continue;
      const dx=Math.max(0,r.left-(a.x+a.width),a.x-r.right);
      const dy=Math.max(0,r.top-(a.y+a.height),a.y-r.bottom);
-     const before=info.visibleBefore.get(el);
-     const newlyVisible=before===undefined;
-     if(!newlyVisible&&before===normalize(label))continue; // unrelated old popup must not be misattributed
-     const score=(newlyVisible?450:240)+(hinted?200:0)+(layer?80:0)-Math.hypot(dx,dy)*1.5-r.width*r.height/12000;
+     const score=(hinted?200:0)+(layer?80:0)-Math.hypot(dx,dy)*1.5-r.width*r.height/12000;
      if(score>best){best=score;winner=el;}
    }
    return best>-420?winner:null;
@@ -59,13 +64,18 @@
    if(!state.active)return false;
    const el=pick(info);
    if(!el||!await waitStable(el)||!state.active)return false;
+   const association=window.SmartCaptureAssociation;
    const stableText=normalize(textOf(el)),id=info.id+'|'+stableText;
+   const popupSignature=association.signature(el,stableText);
    if(state.items.some(it=>it.key===id))return true;
+   if(state.claims.has(popupSignature))return state.claims.get(popupSignature)===info.id;
    // Serialise screenshot API calls. No global lock that drops another trigger.
    const task=async()=>{
      const elapsed=Date.now()-state.lastShot;
      if(elapsed<560)await sleep(560-elapsed);
      if(!state.active||!el.isConnected||!visible(el)||effectiveOpacity(el)<.97)return false;
+     if(association.ownerFor(el,textOf(el),state.events.values())?.id!==info.id)return false;
+     if(state.claims.has(popupSignature))return state.claims.get(popupSignature)===info.id;
      let data;
      try{data=await shot();}catch(e){state.errors.push(e.message);return false;}
      state.lastShot=Date.now();
@@ -77,8 +87,10 @@
      if(w<24||h<24)return false;
      const crop=document.createElement('canvas');crop.width=w;crop.height=h;
      crop.getContext('2d').drawImage(image,x,y,w,h,0,0,w,h);
-     if(!state.items.some(it=>it.key===id))
+     if(!state.items.some(it=>it.key===id)) {
+       state.claims.set(popupSignature,info.id);
        state.items.push({key:id,label:info.label,anchor:info.anchor,image:crop.toDataURL('image/png'),width:w,height:h});
+     }
      return true;
    };
    const queued=state.shotQueue.catch(()=>{}).then(task);
@@ -104,12 +116,14 @@
    if(!state.active)return;
    const src=sourceFrom(target);if(!src)return;
    if(popupElements().some(el=>el.contains(src.source)))return; // popup controls are not new source links
+   if(method==='hover'&&!window.SmartCaptureAssociation?.hoverEligible(src.source))return;
    const a=src.anchor,id=[Math.round(a.x/6),Math.round(a.y/6),Math.round(a.width/6),Math.round(a.height/6),src.label].join(':');
    const existing=state.events.get(id);
    if(existing&&method!=='click')return; // don't overwrite the opening click with later focus/hover
    if(existing&&Date.now()-existing.clickedAt<800)return;
    const visibleBefore=new Map(popupElements().map(el=>[el,normalize(textOf(el))]));
-   const info={id,anchor:a,label:src.label,target:src.source,visibleBefore,clickedAt:method==='click'?Date.now():(existing?.clickedAt||0)};
+   const info={id,anchor:a,label:src.label,target:src.source,method,timestamp:Date.now(),
+     visibleBefore,clickedAt:method==='click'?Date.now():(existing?.clickedAt||0)};
    state.events.set(id,info);
    state.tracker?.note(info);
  }
@@ -137,8 +151,8 @@
  }
  async function start(){
   state.active=false;state.observing?.disconnect();state.tracker?.reset();
-  state.items=[];state.events.clear();state.errors=[];state.shotQueue=Promise.resolve();state.lastShot=0;
-  if(!window.SmartCaptureTracker)throw Error('Capture tracker missing. Reload extension.');
+  state.items=[];state.events.clear();state.claims.clear();state.errors=[];state.shotQueue=Promise.resolve();state.lastShot=0;
+  if(!window.SmartCaptureTracker||!window.SmartCaptureAssociation)throw Error('Capture modules missing. Reload extension.');
   await sleep(150);const image=await shot();const im=await load(image);
   state.base={image,width:im.naturalWidth,height:im.naturalHeight,viewportWidth:innerWidth,viewportHeight:innerHeight};
   // Text-level occupancy: never block whole white cards merely because they're containers.
@@ -231,7 +245,7 @@
    return output;
  }
  chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
-  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.8.0',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
+  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.9.0',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
   action.then(sendResponse).catch(e=>sendResponse({error:e.message}));return true;
  });
 })();
