@@ -15,6 +15,7 @@ jobs:
         run: |
           node --check extension/capture.js
           node --check extension/interaction-tracker.js
+          node --check extension/popup-association.js
           node --check extension/layout.js
           node --check extension/popup.js
           node --check extension/background.js
