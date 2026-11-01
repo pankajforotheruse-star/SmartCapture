@@ -11,6 +11,6 @@ async function ensure(){
  if(status?.version!=='0.8.0')throw Error('Could not initialize SmartCapture v0.8. Reload this tab and retry.');
  return status;
 }
-async function refresh(){try{const r=await ensure();active=r.active;button.textContent=active?'Stop & Save PNG':'Start Capture';status.textContent=active?`Recording — ${r.count} unique popup(s) collected`:'Ready to record this tab';button.disabled=false;}catch(e){button.disabled=true;status.textContent=e.message;}}
-button.onclick=async()=>{button.disabled=true;try{const r=await chrome.tabs.sendMessage(tabId,{type:active?'STOP':'START'});if(r.error)throw Error(r.error);status.textContent=r.message;if(!active)window.close();else await refresh();}catch(e){status.textContent=e.message;button.disabled=false;}};
+async function refresh(){try{const r=await ensure();active=r.active;button.textContent=active?'Stop & Save PNG':'Start Capture';status.textContent=active?`Recording — ${r.count} popup(s) saved from ${r.detected||0} interactions`:'Ready to record this tab';button.disabled=false;}catch(e){button.disabled=true;status.textContent=e.message;}}
+button.onclick=async()=>{button.disabled=true;try{const r=await chrome.tabs.sendMessage(tabId,{type:active?'STOP':'START'});if(r.error)throw Error(r.error);status.textContent=r.message;if(!active)window.close();else{active=false;button.textContent='Start Capture';button.disabled=false;}}catch(e){status.textContent=e.message;button.disabled=false;}};
 refresh();
