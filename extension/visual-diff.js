@@ -45,7 +45,7 @@
       // extends materially beyond the hovered element's original bounds.
       const overlapsAnchor=x<anchor.x+anchor.width&&x+w>anchor.x&&
         y<anchor.y+anchor.height&&y+h>anchor.y;
-      if(overlapsAnchor&&w<=anchor.width+50&&h<=anchor.height+50)continue;
+      if(overlapsAnchor&&w<=anchor.width+80&&h<=anchor.height+80)continue;
       const dx=Math.max(0,x-(anchor.x+anchor.width),anchor.x-(x+w));
       const dy=Math.max(0,y-(anchor.y+anchor.height),anchor.y-(y+h));
       const distance=Math.hypot(dx,dy),radius=Math.max(380,Math.min(750,Math.max(w,h)*2));
