@@ -36,7 +36,7 @@ test('browser extension: independently captures three tooltip owners once',async
   const started=await send('START');
   assert.ok(!started?.error,started?.error);
   const expected=[],iconBoxes=[];
-  for(const [icon,popup] of [['#assoc-icon','#association-popup'],
+  for(const [icon,popup] of [['#assoc-icon','#association-panel'],
     ['#discount-icon','#discount-popup'],['#current-icon','#current-popup']]){
    await page.locator(icon).hover();await page.waitForTimeout(1800);
    expected.push(await page.locator(popup).boundingBox());
