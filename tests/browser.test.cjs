@@ -76,6 +76,11 @@ test('browser extension: independently captures three tooltip owners once',async
       a.y+a.height<=b.y||b.y+b.height<=a.y;
     assert.ok(separated,'Popup placements overlap');
   }
+  // A capture with no interactions must not pretend to have exported a valid PNG.
+  await send('START');
+  const empty=await send('STOP');
+  assert.ok(empty.message.includes('No popups captured'),empty.message);
+  assert.ok(empty.message.includes('PNG not saved'),empty.message);
  }finally{
   if(context)await context.close();
   await new Promise(ok=>server.close(ok));
