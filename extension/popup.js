@@ -5,10 +5,10 @@ async function ensure(){
  if(!tabId||!/^https?:/.test(tab.url||''))throw Error('Open an ordinary http/https webpage.');
  let existing=null;
  try{existing=await chrome.tabs.sendMessage(tabId,{type:'STATUS'});}catch(_){}
- if(existing?.version==='0.12.0')return existing;
+ if(existing?.version==='0.12.1')return existing;
  await chrome.scripting.executeScript({target:{tabId},files:['layout.js','interaction-tracker.js','popup-association.js','hover-detection.js','visual-diff.js','popup-surface.js','geometry.js','capture.js']});
  const status=await chrome.tabs.sendMessage(tabId,{type:'STATUS'});
- if(status?.version!=='0.12.0')throw Error('Could not initialize SmartCapture v0.12. Reload this tab and retry.');
+ if(status?.version!=='0.12.1')throw Error('Could not initialize SmartCapture v0.12.1. Reload this tab and retry.');
  return status;
 }
 async function refresh(){try{const r=await ensure();active=r.active;button.textContent=active?'Stop & Save PNG':'Start Capture';status.textContent=active?`Recording — ${r.count} popup(s) saved from ${r.detected||0} interactions`:'Ready to record this tab';button.disabled=false;}catch(e){button.disabled=true;status.textContent=e.message;}}
