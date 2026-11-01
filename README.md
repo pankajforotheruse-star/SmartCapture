@@ -1,5 +1,17 @@
 # SmartCapture
 
+## v0.9 — Correct popup-to-control association (experimental)
+
+- Each popup is attributed to **one** eligible trigger using recent interaction timing, DOM state changes, optional ARIA links and screen proximity; no page-specific coordinates or labels.
+- Plain hyperlinks without hover-popover semantics are **not** registered as hover popup triggers. Clicking an ordinary link is still tracked, because links may legitimately open popovers.
+- A menu that was already visible and did not change is not re-attributed to a later unrelated interaction.
+- Matching popup content at the same visual location is claimed once per session, preventing duplicate boxes from competing controls.
+- Popup clicks still work across different cards with identical labels when they generate distinct content/locations.
+- Popup capture remains best-effort on websites with complex animation, shadow DOM, or cross-origin iframes.
+
+New tests simulate a filename hyperlink beside a three-dot menu, unrelated clicks, and a real link tooltip. All 14 isolated regression tests passed in the development harness, but the business page is **not** yet browser-tested.
+
+
 ## v0.8 — Reliable capture of multiple controls (experimental)
 
 SmartCapture is intended for general webpages; it does not use fixed popup positions or rules tied to any customer, contract, or sample screenshot. The layout engine finds clear areas using image occupancy and DOM rectangles, places captured popups near their triggering controls, and falls back to extending the output when no safe position exists.
