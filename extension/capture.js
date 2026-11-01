@@ -1,7 +1,7 @@
 'use strict';
 (() => {
- if(window.__smartCaptureV122)return;
- window.__smartCaptureV122=true;
+ if(window.__smartCaptureV123)return;
+ window.__smartCaptureV123=true;
  const state={active:false,base:null,items:[],observing:null,protectedRects:[],tracker:null,shotQueue:Promise.resolve(),lastShot:0,events:new Map(),claims:new Map(),dynamicPopups:new Set(),lastFloatingScan:0,activeHoverId:null,errors:[],sourceIds:new WeakMap(),nextSourceId:0,debug:{hoverEvents:0,hoverShots:0,hoverSaved:0,rejections:{'not-stable':0,clipped:0},stages:{noCandidate:0,staleHover:0,wrongOwner:0,invalidCrop:0}}};
  const rect=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
  const sleep=t=>new Promise(r=>setTimeout(r,t));
@@ -56,7 +56,7 @@
      if(label.length<6||label.length>4500)continue;
      // Multiple pending interactions may observe one newly opened popup.
      // Only the most plausible ORIGINAL trigger may claim that popup.
-     const owner=association.ownerFor(el,label,state.events.values());
+     const owner=association.ownerFor(el,label,[info]);
      if(owner?.id!==info.id)continue;
      const signature=association.signature(el,label);
      const claimed=state.claims.get(signature);
@@ -138,7 +138,8 @@
  async function visualCapture(info){
    if(!state.active||!state.baseDecoded||!window.SmartCaptureVisualDiff||
       !window.SmartCaptureSurface)return false;
-   if(info.method==='hover'&&(!info.target.matches(':hover')||state.activeHoverId!==info.id)){
+   if(info.method==='hover'&&(!info.target.matches(':hover')||
+       state.activeHoverId!==info.id||state.events.get(info.id)!==info)){
      state.debug.stages.staleHover++;return false;
    }
    // Never capture the guessed image-difference rectangle itself.
@@ -146,7 +147,8 @@
    const job=async()=>{
      const elapsed=Date.now()-state.lastShot;
      if(elapsed<530)await sleep(530-elapsed);
-     if(!state.active||state.activeHoverId!==info.id||!info.target.matches(':hover')){
+     if(!state.active||state.activeHoverId!==info.id||
+         state.events.get(info.id)!==info||!info.target.matches(':hover')){
        state.debug.stages.staleHover++;return false;
      }
      let data;
@@ -162,7 +164,7 @@
      const match=window.SmartCaptureSurface.identifyOnPage(
        region,info.anchor,{width:innerWidth,height:innerHeight},document,getComputedStyle);
      if(!match){state.debug.stages.noCandidate++;return false;}
-     if(window.SmartCaptureAssociation.ownerFor(match.element,textOf(match.element),state.events.values())?.id!==info.id){
+     if(window.SmartCaptureAssociation.ownerFor(match.element,textOf(match.element),[info])?.id!==info.id){
        state.debug.stages.wrongOwner++;return false;
      }
      const saved=cropPopup(image,match.element,info,'hover');
@@ -176,6 +178,10 @@
  }
  async function captureTrigger(info){
    if(!state.active)return false;
+   if(info.method==='hover'&&(state.activeHoverId!==info.id||
+       !info.target?.matches(':hover')||state.events.get(info.id)!==info)){
+     state.debug.stages.staleHover++;return false;
+   }
    // A real popup element is the primary source of truth. Capture it while
    // still visible; screenshot differencing is a fallback, not the first step.
    let el=pick(info);
@@ -186,7 +192,8 @@
        const elapsed=Date.now()-state.lastShot;
        if(elapsed<530)await sleep(530-elapsed);
        if(!state.active||!el.isConnected||!visible(el)||effectiveOpacity(el)<.98)return false;
-       if(info.method==='hover'&&(state.activeHoverId!==info.id||!info.target.matches(':hover'))){
+       if(info.method==='hover'&&(state.activeHoverId!==info.id||
+           state.events.get(info.id)!==info||!info.target.matches(':hover'))){
          state.debug.stages.staleHover++;return false;
        }
        let data;
@@ -227,8 +234,9 @@
    if(!state.sourceIds.has(src.source))state.sourceIds.set(src.source,++state.nextSourceId);
    const id=String(state.sourceIds.get(src.source));
    const existing=state.events.get(id);
-   if(existing&&method!=='click'&&Date.now()-existing.timestamp<400&&
-      state.activeHoverId===id)return; // nested SVG mouseovers belong to same enter
+   // One real pointer entry per source. SVG descendants are not new hovers.
+   if(existing&&method==='hover'&&state.activeHoverId===id&&src.source.matches(':hover'))return;
+   if(existing&&method==='focus'&&state.activeHoverId===id)return;
    if(existing&&Date.now()-existing.clickedAt<800)return;
    if(method==='hover'){state.debug.hoverEvents++;state.activeHoverId=id;}
    const visibleBefore=method==='hover' ? new Map(state.baselineVisible||[]) : new Map(popupElements().map(el=>[el,normalize(textOf(el))]));
@@ -328,7 +336,15 @@
     protectedRects.push({x,y,w:thickness,h},{x:x+w-thickness,y,w:thickness,h});
   }
   state.protectedRects=protectedRects;
-  state.tracker=window.SmartCaptureTracker.create({capture:captureTrigger,delay:125});
+  state.tracker=window.SmartCaptureTracker.create({
+    capture:captureTrigger,delay:110,
+    canAttempt:info=>{
+      if(!state.active)return false;
+      if(info.method==='hover')
+        return state.activeHoverId===info.id&&info.target?.isConnected&&info.target.matches(':hover');
+      return Date.now()-info.timestamp<1600;
+    }
+  });
   state.active=true;observer();return {message:'Recording started. Interact with popups, then Stop & Save PNG.'};
  }
  async function exportPNG(){
@@ -399,7 +415,7 @@
    return output;
  }
  chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
-  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.12.2',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0,hoverShots:state.debug.hoverShots,hoverSaved:state.debug.hoverSaved,rejections:state.debug.rejections}):msg?.type==='METRICS'?Promise.resolve({items:state.items.map(i=>({kind:i.kind,width:i.width,height:i.height,anchor:i.anchor,minFontPx:i.minFontPx})),layout:state.layoutDiagnostics||null}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
+  const action=msg?.type==='STATUS'?Promise.resolve({version:'0.12.3',active:state.active,count:state.items.length,detected:state.tracker?.stats().seen||0,hoverShots:state.debug.hoverShots,hoverSaved:state.debug.hoverSaved,rejections:state.debug.rejections}):msg?.type==='METRICS'?Promise.resolve({items:state.items.map(i=>({kind:i.kind,width:i.width,height:i.height,anchor:i.anchor,minFontPx:i.minFontPx})),layout:state.layoutDiagnostics||null}):msg?.type==='START'?start():msg?.type==='STOP'?stop():Promise.reject(Error('Unknown command'));
   action.then(sendResponse).catch(e=>sendResponse({error:e.message}));return true;
  });
 })();
