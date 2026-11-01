@@ -43,10 +43,17 @@
     const w=item.width+4,h=item.height+4;
     const origin=center(item.anchor),step=Math.max(9,Math.round(13*scale)),gap=Math.round(10*scale);
     const found=[];
-    for(let y=gap;y+h<height-gap;y+=step)for(let x=gap;x+w<width-gap;x+=step){
+    // A popup may cross the bottom edge if MOST of it occupies genuinely blank space.
+    // This avoids moving a 470px product list below the entire viewport when only
+    // a few additional pixels are needed. Never extend sideways or over content.
+    const minInside=Math.min(h,Math.max(70*scale,Math.min(h*.4,130*scale)));
+    const lastY=Math.max(gap,height-minInside);
+    for(let y=gap;y<=lastY;y+=step)for(let x=gap;x+w<width-gap;x+=step){
       const r={x,y,w,h};
-      if(occ.count(r)>0)continue; // HARD constraint, including background text and borders.
-      found.push({...r,cost:distance(origin,center(r))});
+      if(occ.count(r)>0)continue; // hard exclusion for the part over original screenshot
+      const addedHeight=Math.max(0,y+h+gap-height);
+      const extensionCost=addedHeight>0?65*scale+addedHeight*2.5:0;
+      found.push({...r,cost:distance(origin,center(r))+extensionCost,addedHeight});
     }
     found.sort((a,b)=>a.cost-b.cost);
     const best=[];
