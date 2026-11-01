@@ -63,3 +63,23 @@ test('screenshot image ink is an obstacle even without DOM geometry',()=>{
  const p=result.positions[0];
  assert.ok(!intersects(p,ink,0),'placement covered image content');
 });
+
+test('tall product popup reuses blank viewport space with minimal extension',()=>{
+ const layout=engine();
+ const tallItems=[
+  {width:144,height:96,anchor:{x:460,y:98,width:79,height:21}},
+  {width:160,height:478,anchor:{x:550,y:98,width:85,height:21}}
+ ];
+ const blockers=[
+  {x:0,y:0,w:1653,h:55},{x:0,y:55,w:130,h:765},
+  {x:440,y:96,w:100,h:24},{x:550,y:96,w:85,h:24},
+  {x:450,y:150,w:100,h:90},{x:770,y:150,w:110,h:90},
+  {x:130,y:270,w:1500,h:4},{x:130,y:353,w:1500,h:4},
+  {x:350,y:305,w:100,h:40},{x:810,y:305,w:100,h:40}
+ ];
+ const result=layout.compute({items:tallItems,obstacles:blockers,routeObstacles:blockers.filter(o=>o.h!==4),image:{},width:1653,height:820,scale:1});
+ assert.ok(result.positions[1].y<820,'product must start within the original viewport');
+ assert.ok(result.height<=920,'avoid adding a second screenshot-height worth of blank space');
+ assert.ok(result.positions.every(p=>blockers.every(b=>!intersects(p,b,0))),'no original content may be covered');
+ assert.ok(!intersects(result.positions[0],result.positions[1],10),'popup boxes may not overlap');
+});
