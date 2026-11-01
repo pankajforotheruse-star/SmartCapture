@@ -40,3 +40,10 @@ test('does not invent a tooltip when screenshot pixels are identical',()=>{
  const before=frame();
  assert.equal(detect(before,before,W,H,{x:600,y:180,width:12,height:12}),null);
 });
+
+test('ignores a button background color change without a popup',()=>{
+ const before=frame(),after=frame();
+ fill(after,480,175,112,28,65);
+ const result=detect(before,after,W,H,{x:480,y:175,width:112,height:28});
+ assert.equal(result,null);
+});
