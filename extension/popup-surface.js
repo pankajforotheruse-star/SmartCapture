@@ -73,5 +73,41 @@
     }
     return identify(region,source,viewport,elements,styleOf);
   }
-  window.SmartCaptureSurface={identify,identifyOnPage,rank,overlap,opaqueColor:color=>!transparent(color)};
+
+  function resolveOpaque(element,styleOf,viewport){
+    if(!element?.getBoundingClientRect)return {element:null,reason:'invalid-element'};
+    const outer=element.getBoundingClientRect();
+    const original=norm(element.innerText||element.textContent||'');
+    const candidates=[element];
+    // Popovers often use a transparent portal shell surrounding the white panel.
+    // Descend only into that shell; do not expand into parent page cards.
+    if(element.querySelectorAll){
+      for(const n of Array.from(element.querySelectorAll('*')).slice(0,180))candidates.push(n);
+    }
+    const valid=[];
+    for(const node of candidates){
+      const rect=node.getBoundingClientRect?.(),style=styleOf(node);
+      if(!rect||!style)continue;
+      if(transparent(style.backgroundColor)||Number(style.opacity||1)<.98||
+         style.visibility==='hidden'||style.display==='none')continue;
+      const r={x:rect.left??rect.x,y:rect.top??rect.y,width:rect.width,height:rect.height};
+      if(r.width<60||r.height<25||r.x<-1||r.y<-1||
+         r.x+r.width>viewport.width+2||r.y+r.height>viewport.height+2)continue;
+      // The selected opaque surface must contain the great majority of visible
+      // popup text and controls. Otherwise it is a label, not a complete panel.
+      const text=norm(node.innerText||node.textContent||'');
+      if(text.length<5)continue;
+      const retention=original?text.length/original.length:0;
+      if(node!==element&&retention<.80)continue;
+      if(node!==element&&(r.width>outer.width*1.1||r.height>outer.height*1.1))continue;
+      // Opaque children win over a transparent wrapper; prefer the smallest
+      // complete container, avoiding unrelated page labels in the crop.
+      valid.push({element:node,rect:r,score:retention*1000-Math.log2(area(r))*5});
+    }
+    valid.sort((a,b)=>b.score-a.score);
+    if(!valid.length)return {element:null,reason:'no-opaque-complete-surface'};
+    return {element:valid[0].element,rect:valid[0].rect,reason:null};
+  }
+
+  window.SmartCaptureSurface={identify,identifyOnPage,rank,overlap,resolveOpaque,opaqueColor:color=>!transparent(color)};
 })();
