@@ -22,7 +22,9 @@ test('rapid clicks on separate links do not cancel the first capture',async()=>{
  session.note({id:'agreement-570-account',anchor:{x:550,y:377}});
  const result=await session.flush();
  assert.deepEqual(seen,['agreement-572-account','agreement-570-account']);
- assert.deepEqual(result,{seen:2,captured:2,pending:0});
+ assert.equal(result.seen,2);
+ assert.equal(result.captured,2);
+ assert.equal(result.pending,0);
 });
 test('clicking the same source twice does not duplicate one popup',async()=>{
  let calls=0;
