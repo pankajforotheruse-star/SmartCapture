@@ -84,6 +84,26 @@ test('browser extension: independently captures three tooltip owners once',async
   const empty=await send('STOP');
   assert.ok(empty.message.includes('No popups captured'),empty.message);
   assert.ok(empty.message.includes('PNG not saved'),empty.message);
+  // Repeat with different interaction orders. A single green run does not
+  // establish reliability; this checks state reset, source attribution and
+  // screenshot queue stability across full recording sessions.
+  for(const order of [
+    ['#current-icon','#assoc-icon','#discount-icon'],
+    ['#discount-icon','#current-icon','#assoc-icon']
+  ]){
+    await send('START');
+    for(const [i,icon] of order.entries()){
+      await page.locator('#ordinary-link').hover();
+      await page.waitForTimeout(100);
+      await page.locator(icon).hover();
+      await page.waitForTimeout(1150);
+      const status=await send('STATUS');
+      assert.equal(status.count,i+1,'Inconsistent repeat session for '+icon+': '+JSON.stringify(status));
+      assert.ok(status.detected<=i+2,'Excess hover candidates: '+JSON.stringify(status));
+    }
+    const final=await send('STOP');
+    assert.ok(final.message.includes('Saved 3 popups'),final.message);
+  }
  }finally{
   if(context)await context.close();
   await new Promise(ok=>server.close(ok));
